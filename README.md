@@ -19,3 +19,5 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 - [ ] Stage 4: Airflow orchestration
 - [ ] Stage 5: CI/CD
 - [ ] Stage 6: monitoring (drift, Grafana)
+
+## Notes
