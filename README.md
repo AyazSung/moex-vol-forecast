@@ -3,7 +3,7 @@
 Daily volatility forecast for MOEX stocks — end-to-end ML pipeline.
 
 ## Goal
-Predict next-day realized volatility for liquid MOEX shares and serve forecasts daily.
+Predict next-day realized volatility for top-10 liquid MOEX shares.
 
 ## Data
 MOEX ISS API (free, daily candles).
