@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from moex-vol-forecast!")
+"""Daily volatility forecast for MOEX stocks."""
