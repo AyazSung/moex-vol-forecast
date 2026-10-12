@@ -20,13 +20,17 @@ TIMEOUT_SECONDS = 30
 
 def make_session() -> requests.Session:
     """HTTP session that retries network errors and 429/5xx answers."""
-    retry = Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
+    retry = Retry(
+        total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504)
+    )
     session = requests.Session()
     session.mount("https://", HTTPAdapter(max_retries=retry))
     return session
 
 
-def fetch_candles(ticker: str, from_date: date, session: requests.Session | None = None) -> pd.DataFrame:
+def fetch_candles(
+    ticker: str, from_date: date, session: requests.Session | None = None
+) -> pd.DataFrame:
     """Download all daily candles for ticker since from_date."""
     session = session or make_session()
     url = URL.format(ticker=ticker)
@@ -38,7 +42,12 @@ def fetch_candles(ticker: str, from_date: date, session: requests.Session | None
         if page_num > MAX_PAGES:
             raise RuntimeError(f"more than {MAX_PAGES} pages for {ticker}, stopping")
 
-        params = {"interval": 24, "from": from_date.isoformat(), "start": start, "iss.meta": "off"}
+        params = {
+            "interval": 24,
+            "from": from_date.isoformat(),
+            "start": start,
+            "iss.meta": "off",
+        }
         response = session.get(url, params=params, timeout=TIMEOUT_SECONDS)
         response.raise_for_status()
         block = response.json()["candles"]

@@ -35,11 +35,15 @@ def main() -> None:
         settings = load_settings()
         candles = fetch_candles(settings.ticker, settings.from_date)
         if candles.empty:
-            raise ValueError(f"no candles for {settings.ticker} from {settings.from_date}")
+            raise ValueError(
+                f"no candles for {settings.ticker} from {settings.from_date}"
+            )
         out_path = RAW_DIR / f"{settings.ticker.lower()}.csv"
         write_csv_atomic(candles, out_path)
     except (ValueError, RuntimeError, requests.RequestException) as err:
         logger.error("%s", err)
         sys.exit(1)
 
-    logger.info("%s: %d candles from %s", settings.ticker, len(candles), settings.from_date)
+    logger.info(
+        "%s: %d candles from %s", settings.ticker, len(candles), settings.from_date
+    )
