@@ -12,7 +12,7 @@ MOEX ISS API (free, daily candles).
 Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub Actions.
 
 ## Roadmap
-- [ ] Stage 0: project structure, configs, logging, tests
+- [x] Stage 0: project structure, configs, logging, tests
 - [ ] Stage 1: Docker
 - [ ] Stage 2: MLflow tracking and model registry
 - [ ] Stage 3: batch scoring + FastAPI service

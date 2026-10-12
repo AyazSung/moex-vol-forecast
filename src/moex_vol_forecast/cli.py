@@ -40,7 +40,7 @@ def main() -> None:
             )
         out_path = RAW_DIR / f"{settings.ticker.lower()}.csv"
         write_csv_atomic(candles, out_path)
-    except (ValueError, RuntimeError, requests.RequestException) as err:
+    except (ValueError, RuntimeError, OSError, requests.RequestException) as err:
         logger.error("%s", err)
         sys.exit(1)
 
