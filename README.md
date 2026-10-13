@@ -20,9 +20,28 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 - [ ] Stage 5: CI/CD
 - [ ] Stage 6: monitoring (drift, Grafana)
 
+## Run locally
+
+```bash
+uv sync
+uv run --env-file .env fetch-candles
+```
+
+Settings come from environment variables: `TICKER` (default `SBER`), `FROM_DATE` (default `2026-10-01`), `DATA_DIR` (default `./data`), `LOG_LEVEL` (default `INFO`).
+
+## Docker
+
+```bash
+docker build -t moex-loader:0.2.0 .
+docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-loader:0.2.0
+```
+
 ## Schedule
 
 On a server the fetch job runs daily at 00:15 MSK, after the evening session closes, so the previous day's candle is final:
-    PATH=/path/to/python/bin:/usr/bin:/bin
-    P=/path/to/moex-vol-forecast
-    15 0 * * * $P/scripts/fetch_candles.sh >> $P/logs/fetch.log 2>&1
+
+```
+PATH=/path/to/python/bin:/usr/bin:/bin
+P=/path/to/moex-vol-forecast
+15 0 * * * $P/scripts/fetch_candles.sh >> $P/logs/fetch.log 2>&1
+```

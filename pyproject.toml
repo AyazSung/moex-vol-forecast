@@ -1,4 +1,19 @@
+# pyproject.toml — «паспорт» проекта: что это за пакет, на каком Python работает,
+# какие библиотеки ему нужны и как настроены инструменты (ruff, pytest).
+#
+# pyproject.toml и uv.lock:
+#   pyproject.toml — ЧТО нужно, с допусками («pandas версии 3.0.6 или новее»).
+#                    Пишешь ты: через `uv add` / `uv remove` или руками.
+#   uv.lock        — что ТОЧНО установлено: точные версии всех пакетов, включая
+#                    зависимости зависимостей, и их контрольные суммы. Пишет только uv,
+#                    руками не правится. По нему `uv sync` собирает одинаковое
+#                    окружение у тебя, у коллеги, в Docker и в CI.
+#   Оба файла хранятся в Git.
+
 [project]
+# Имя и версия пакета. Версию поднимают командой `uv version --bump minor`
+# (или patch / major): она меняет версию и здесь, и в uv.lock.
+# Если поменять только здесь, сборка Docker-образа упадёт на `uv sync --locked`.
 name = "moex-vol-forecast"
 version = "0.1.0"
 description = "Daily volatility forecast for MOEX stocks"
@@ -6,30 +21,48 @@ readme = "README.md"
 authors = [
     { name = "Ayaz Sunagatullin", email = "ayazsung@gmail.com" }
 ]
+# Минимальная версия Python. Конкретная версия для проекта — в файле .python-version.
 requires-python = ">=3.13"
+# Библиотеки, без которых загрузчик не работает. ">=" значит «эта версия или новее».
+# Добавлять: `uv add имя`. Точные установленные версии записаны в uv.lock.
 dependencies = [
     "pandas>=3.0.6",
     "requests>=2.34.2",
 ]
 
+# Команды терминала, которые появляются после установки пакета.
+# Формат: имя_команды = "модуль:функция" — `uv run fetch-candles` вызывает cli.main().
+# После изменения этого раздела нужен `uv sync`, чтобы команда обновилась.
 [project.scripts]
 fetch-candles = "moex_vol_forecast.cli:main"
 
+# Чем собирать пакет при установке (uv_build — сборщик от uv). Трогать не нужно.
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
 
+# Инструменты только для разработки. Добавлять: `uv add --dev имя`.
+# В Docker-образ не ставятся: там `uv sync --no-dev`.
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.17.0",
 ]
 
+# Настройки линтера и форматтера ruff: `uv run ruff check`, `uv run ruff format`.
 [tool.ruff]
+# Максимальная длина строки кода.
 line-length = 88
 
 [tool.ruff.lint]
+# Какие группы правил проверять:
+#   E4, E7, E9 — явные ошибки: синтаксис, `== None`, «голый» except и т.п.;
+#   F  — настоящие ошибки: неиспользуемые импорты, необъявленные имена;
+#   I  — порядок импортов;
+#   B  — частые ловушки Python (например, список как значение по умолчанию);
+#   UP — устаревший синтаксис, который можно заменить современным.
 select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
 
+# Настройки тестов: `uv run pytest` ищет тесты в папке tests.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
