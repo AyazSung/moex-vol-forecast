@@ -218,6 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- добавлено для проекта moex-vol-forecast ---
+# Данные и логи создаёт загрузчик: их можно скачать заново, в Git они не хранятся.
 data/
 logs/
+# Личные настройки редактора VS Code.
 .vscode/
