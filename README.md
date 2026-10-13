@@ -23,7 +23,6 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 ## Schedule
 
 On a server the fetch job runs daily at 00:15 MSK, after the evening session closes, so the previous day's candle is final:
-
     PATH=/path/to/python/bin:/usr/bin:/bin
     P=/path/to/moex-vol-forecast
     15 0 * * * $P/scripts/fetch_candles.sh >> $P/logs/fetch.log 2>&1
