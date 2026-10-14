@@ -32,7 +32,8 @@ Settings come from environment variables: `TICKER` (default `SBER`), `FROM_DATE`
 ## Docker
 
 ```bash
-docker build -t moex-loader:0.2.0 .
+# image for both Mac (arm64) and typical servers (amd64)
+docker build --platform linux/amd64,linux/arm64 -t moex-loader:0.2.0 .
 docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-loader:0.2.0
 ```
 
