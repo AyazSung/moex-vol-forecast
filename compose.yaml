@@ -1,0 +1,60 @@
+# compose.yaml — описание нескольких контейнеров, которые работают вместе.
+# Одна команда поднимает всё сразу:  docker compose up -d db
+# Загрузчик запускается как разовая задача:  docker compose run --rm loader
+#
+# Внутри compose все сервисы находятся в общей сети и находят друг друга по имени
+# сервиса: загрузчик обращается к базе по адресу db:5432, а не localhost.
+# Отступы в YAML важны: они показывают вложенность, как в Python.
+
+services:
+  # ---------- база данных PostgreSQL ----------
+  db:
+    # Официальный образ PostgreSQL 18.
+    image: postgres:18
+    # Переменные, по которым образ при первом запуске создаёт пользователя и базу.
+    # Пароль прямо в файле допустим только для учебной базы на своём компьютере:
+    # в проде пароли хранят в .env или в хранилище секретов, а не в Git.
+    environment:
+      POSTGRES_USER: moex
+      POSTGRES_PASSWORD: moex
+      POSTGRES_DB: moex
+    # Проброс порта "порт_на_Mac:порт_в_контейнере": база доступна с Mac
+    # по адресу localhost:5432 (например, для uv run и тестов).
+    ports:
+      - "5432:5432"
+    # Данные базы хранятся в томе pgdata — он переживает удаление контейнера.
+    # Для PostgreSQL 18 том подключают к /var/lib/postgresql.
+    volumes:
+      - pgdata:/var/lib/postgresql
+    # Проверка здоровья: pg_isready отвечает, готова ли база принимать подключения.
+    # Docker повторяет её каждые 2 секунды; статус виден в `docker compose ps`.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moex -d moex"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # ---------- загрузчик свечей ----------
+  loader:
+    # Готовый образ. Если его нет, compose соберёт его по Dockerfile (build: .).
+    image: moex-loader:0.3.0
+    build: .
+    # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
+    env_file: .env
+    # Адрес базы: хост db — это имя сервиса выше, а не localhost.
+    environment:
+      DATABASE_URL: postgresql://moex:moex@db:5432/moex
+    # Папка data проекта подключается внутрь, как -v в docker run.
+    volumes:
+      - ./data:/app/data
+    # Запускать загрузчик только после того, как проверка здоровья базы прошла.
+    depends_on:
+      db:
+        condition: service_healthy
+    # Профиль jobs: `docker compose up` этот сервис не запускает сам;
+    # его запускают явно — `docker compose run --rm loader`.
+    profiles: ["jobs"]
+
+# Именованные тома: Docker сам хранит их данные; удаляются только явно (down -v).
+volumes:
+  pgdata:

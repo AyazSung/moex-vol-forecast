@@ -5,13 +5,15 @@
 # плюс логи, обработка ошибок и коды возврата.
 
 import logging
-import os
 import signal
 import sys
 
+import psycopg
 import requests
 
 from moex_vol_forecast.config import load_settings
+from moex_vol_forecast.db import save_candles
+from moex_vol_forecast.logging_setup import setup_logging
 from moex_vol_forecast.moex import fetch_candles
 from moex_vol_forecast.storage import write_csv_atomic
 
@@ -27,15 +29,9 @@ def exit_on_sigterm(signum: int, frame: object) -> None:
 
 
 def main() -> None:
-    # Настройка логов — один раз, здесь, в точке входа (модули только пишут в лог).
-    #   level   — порог важности из LOG_LEVEL: DEBUG < INFO < WARNING < ERROR;
-    #   format  — время, уровень, имя модуля и сообщение;
-    #   datefmt — формат времени.
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    # Настройка логов — один раз, в точке входа (модули только пишут в лог).
+    # Сама настройка — в logging_setup.py, её же использует import-candles.
+    setup_logging()
     # При получении SIGTERM вызвать exit_on_sigterm.
     signal.signal(signal.SIGTERM, exit_on_sigterm)
 
@@ -50,12 +46,22 @@ def main() -> None:
         # "/" у Path склеивает части пути.
         out_path = settings.data_dir / "raw" / f"{settings.ticker.lower()}.csv"
         write_csv_atomic(candles, out_path)
+        # Задан адрес базы — дополнительно сохранить свечи в PostgreSQL.
+        if settings.database_url:
+            save_candles(candles, settings.ticker, settings.database_url)
     # Ожидаемые ошибки: плохие настройки и пустые данные (ValueError), предохранитель
-    # (RuntimeError), диск и права (OSError), сеть и HTTP (RequestException).
+    # (RuntimeError), диск и права (OSError), сеть и HTTP (RequestException),
+    # база данных недоступна или отказала (psycopg.Error).
     # Для них — одна понятная строка ERROR и код возврата 1:
     # его видят cron, Docker и CI.
     # Всё остальное — баг: Python сам выведет трассировку и тоже выйдет с кодом 1.
-    except (ValueError, RuntimeError, OSError, requests.RequestException) as err:
+    except (
+        ValueError,
+        RuntimeError,
+        OSError,
+        requests.RequestException,
+        psycopg.Error,
+    ) as err:
         logger.error("%s", err)
         sys.exit(1)
 

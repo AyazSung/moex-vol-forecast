@@ -15,7 +15,7 @@
 # (или patch / major): она меняет версию и здесь, и в uv.lock.
 # Если поменять только здесь, сборка Docker-образа упадёт на `uv sync --locked`.
 name = "moex-vol-forecast"
-version = "0.2.0"
+version = "0.3.0"
 description = "Daily volatility forecast for MOEX stocks"
 readme = "README.md"
 authors = [
@@ -27,6 +27,7 @@ requires-python = ">=3.13"
 # Добавлять: `uv add имя`. Точные установленные версии записаны в uv.lock.
 dependencies = [
     "pandas>=3.0.6",
+    "psycopg[binary]>=3.3.6",
     "requests>=2.34.2",
 ]
 
@@ -35,6 +36,7 @@ dependencies = [
 # После изменения этого раздела нужен `uv sync`, чтобы команда обновилась.
 [project.scripts]
 fetch-candles = "moex_vol_forecast.cli:main"
+import-candles = "moex_vol_forecast.import_csv:main"
 
 # Чем собирать пакет при установке (uv_build — сборщик от uv). Трогать не нужно.
 [build-system]

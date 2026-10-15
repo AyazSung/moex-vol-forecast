@@ -16,6 +16,7 @@ def test_defaults(monkeypatch):
     monkeypatch.delenv("TICKER", raising=False)
     monkeypatch.delenv("FROM_DATE", raising=False)
     monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
 
     settings = load_settings()
 
@@ -23,6 +24,8 @@ def test_defaults(monkeypatch):
     assert settings.ticker == "SBER"
     assert settings.from_date == date(2026, 10, 1)
     assert settings.data_dir == PROJECT_DIR / "data"
+    # Адрес базы не задан — в базу не пишем.
+    assert settings.database_url is None
 
 
 def test_reads_env_and_uppercases_ticker(monkeypatch):

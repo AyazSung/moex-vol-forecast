@@ -24,6 +24,7 @@ class Settings:
     ticker: str  # тикер акции, например SBER
     from_date: date  # с какой даты скачивать свечи
     data_dir: Path  # папка для данных; файлы ложатся в data_dir/raw/<тикер>.csv
+    database_url: str | None  # адрес базы PostgreSQL; None — в базу не пишем
 
 
 def load_settings() -> Settings:
@@ -39,4 +40,12 @@ def load_settings() -> Settings:
     # Из окружения приходит строка, а умолчание — уже Path; Path(...) приводит оба
     # случая к одному типу, чтобы дальше склеивать путь через "/".
     data_dir = Path(os.environ.get("DATA_DIR", PROJECT_DIR / "data"))
-    return Settings(ticker=ticker, from_date=from_date, data_dir=data_dir)
+    # Адрес базы вида postgresql://пользователь:пароль@хост:порт/имя_базы.
+    # Не задан — get вернёт None, и загрузчик пишет только CSV, как раньше.
+    database_url = os.environ.get("DATABASE_URL")
+    return Settings(
+        ticker=ticker,
+        from_date=from_date,
+        data_dir=data_dir,
+        database_url=database_url,
+    )
