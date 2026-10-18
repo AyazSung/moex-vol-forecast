@@ -39,6 +39,7 @@ dependencies = [
 [project.scripts]
 fetch-candles = "moex_vol_forecast.cli:main"
 import-candles = "moex_vol_forecast.import_csv:main"
+train-model = "moex_vol_forecast.train:main"
 
 # Чем собирать пакет при установке (uv_build — сборщик от uv). Трогать не нужно.
 [build-system]

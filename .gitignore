@@ -225,3 +225,8 @@ data/
 logs/
 # Личные настройки редактора VS Code.
 .vscode/
+
+# MLflow: база запусков и файлы моделей — создаются при обучении, в Git не хранятся.
+mlflow.db
+mlruns/
+mlartifacts/
