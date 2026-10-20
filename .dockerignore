@@ -18,3 +18,9 @@ data/
 logs/
 .git/
 .vscode/
+
+# Журнал и файлы моделей MLflow с Mac: в образе им не место — модели контейнеры
+# берут у сервера MLflow.
+mlflow.db
+mlruns/
+mlartifacts/

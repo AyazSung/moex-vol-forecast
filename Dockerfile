@@ -1,6 +1,9 @@
-# Dockerfile — рецепт образа с загрузчиком свечей.
-# Сборка:  docker build -t moex-loader:0.2.0 .
-# Запуск:  docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-loader:0.2.0
+# Dockerfile — рецепт образа проекта. В одном образе все команды проекта:
+# загрузчик (fetch-candles, import-candles), обучение и прогноз (train-model,
+# predict-vol), API (uvicorn) и сервер MLflow. Какую запустить, решает
+# docker compose (command: у каждого сервиса) или аргумент после имени образа.
+# Сборка:  docker compose build   (или: docker build -t moex-vol:0.4.0 .)
+# Запуск:  docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-vol:0.4.0
 #
 # Образ собирается в две стадии:
 #   1) builder («мастерская») — ставим библиотеки и наш код в окружение .venv;
@@ -50,29 +53,36 @@ FROM python:3.13-slim
 
 # Создаём обычного пользователя app (номер uid 1000) вместо администратора root:
 # если в библиотеке найдут уязвимость, у программы не будет прав менять систему.
-# Сразу создаём папку для данных и делаем app её владельцем — иначе он не смог бы
-# в неё писать.
+# Сразу создаём папки для данных и для файлов моделей сервера MLflow и делаем app
+# их владельцем — иначе он не смог бы в них писать. Именованный том, подключённый
+# к такой папке, при первом запуске получает того же владельца.
 #   && — следующая команда выполняется, только если предыдущая прошла успешно;
 #   \  — команда продолжается на следующей строке.
 RUN useradd --create-home --uid 1000 app \
-    && mkdir -p /app/data \
-    && chown app:app /app/data
+    && mkdir -p /app/data /app/mlartifacts \
+    && chown app:app /app/data /app/mlartifacts
 
 WORKDIR /app
 
 # Забираем из мастерской только готовое окружение. --chown: владелец файлов — app.
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
-# PATH     — «активируем» .venv: команда fetch-candles лежит в /app/.venv/bin.
+# PATH     — «активируем» .venv: команды fetch-candles, uvicorn, mlflow и другие
+#            лежат в /app/.venv/bin.
 # DATA_DIR — куда загрузчик пишет данные (см. config.py). Чтобы данные сохранились
 #            на компьютере, при запуске подключай сюда папку:
 #            -v "$(pwd)/data:/app/data".
+# PYTHONUNBUFFERED=1 — print() выводится сразу, а не копится в буфере до конца
+#            программы: без этого в логах контейнера таблица прогноза оказалась бы
+#            после строк лога, напечатанных позже неё.
 ENV PATH="/app/.venv/bin:$PATH" \
-    DATA_DIR=/app/data
+    DATA_DIR=/app/data \
+    PYTHONUNBUFFERED=1
 
 # Всё дальше, включая сам загрузчик, работает от имени app, а не root.
 USER app
 
-# Команда при старте контейнера. Форма списком ["..."]: программа становится PID 1
-# и сама получает SIGTERM от docker stop (обработчик есть в cli.py).
+# Команда по умолчанию при старте контейнера. Форма списком ["..."]: программа
+# становится PID 1 и сама получает SIGTERM от docker stop (обработчик есть в cli.py).
+# Сервисы в compose.yaml заменяют её своей (command:).
 CMD ["fetch-candles"]

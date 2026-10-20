@@ -33,11 +33,53 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
-
+  # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
+  mlflow:
+    # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
+    image: moex-vol:0.4.0
+    build: .
+    # Команда вместо CMD образа — запустить сервер MLflow:
+    #   --backend-store-uri     — где журнал: база mlflow в нашей PostgreSQL
+    #                             (postgresql+psycopg — через драйвер psycopg);
+    #   --artifacts-destination — куда класть файлы моделей: папка в томе;
+    #                             клиенты отправляют и получают их через сам сервер;
+    #   --allowed-hosts         — по каким адресам к серверу можно обращаться:
+    #                             mlflow:5000 из контейнеров, localhost с любым
+    #                             портом с Mac. Остальные адреса сервер отклонит
+    #                             с ошибкой «Invalid Host header» — это защита
+    #                             от подмены адреса (DNS rebinding).
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=postgresql+psycopg://moex:moex@db:5432/mlflow
+      - --artifacts-destination=/app/mlartifacts
+      - --allowed-hosts=mlflow:5000,localhost:*,127.0.0.1:*
+    # Интерфейс MLflow на Mac: http://localhost:5001 (порт 5000 на Mac занят AirPlay).
+    ports:
+      - "5001:5000"
+    # Файлы моделей — в томе mlartifacts: переживают удаление контейнера.
+    volumes:
+      - mlartifacts:/app/mlartifacts
+    depends_on:
+      db:
+        condition: service_healthy
+    # Сервер готов, когда отвечает на адрес /health. curl в образе нет, поэтому
+    # проверяем маленькой программой на Python: ошибка соединения — код выхода 1.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/health')
+      interval: 5s
+      timeout: 5s
+      retries: 30
   # ---------- загрузчик свечей ----------
   loader:
     # Готовый образ. Если его нет, compose соберёт его по Dockerfile (build: .).
-    image: moex-loader:0.3.0
+    image: moex-vol:0.4.0
     build: .
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
@@ -58,3 +100,4 @@ services:
 # Именованные тома: Docker сам хранит их данные; удаляются только явно (down -v).
 volumes:
   pgdata:
+  mlartifacts:
