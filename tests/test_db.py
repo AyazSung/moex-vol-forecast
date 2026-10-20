@@ -10,7 +10,7 @@ import pandas as pd
 import psycopg
 import pytest
 
-from moex_vol_forecast.db import save_candles
+from moex_vol_forecast.db import latest_forecast, save_candles, save_forecasts
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -57,3 +57,33 @@ def test_upsert_is_idempotent_and_updates():
         # Убираем за собой тестовые строки при любом исходе теста.
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute("DELETE FROM candles WHERE ticker = %s", (TICKER,))
+
+
+def make_forecasts(value):
+    """Forecasts for two days, as predict-vol builds them."""
+    return pd.DataFrame(
+        {
+            "ticker": [TICKER, TICKER],
+            "date": pd.to_datetime(["2026-10-01", "2026-10-02"]),
+            "forecast_pk": [value, value],
+        }
+    )
+
+
+def test_forecasts_upsert_and_latest():
+    try:
+        # Два прогноза версии 1, затем те же дни версией 2, затем версия 2 ещё раз.
+        save_forecasts(make_forecasts(0.01), "1", DATABASE_URL)
+        save_forecasts(make_forecasts(0.02), "2", DATABASE_URL)
+        save_forecasts(make_forecasts(0.03), "2", DATABASE_URL)
+
+        latest = latest_forecast(TICKER, DATABASE_URL)
+        # Последний день свечи, последняя записанная версия, обновлённое значение.
+        assert latest["as_of"].isoformat() == "2026-10-02"
+        assert latest["model_version"] == 2
+        assert latest["forecast_pk"] == 0.03
+        # У тикера без прогнозов — None.
+        assert latest_forecast("NO_SUCH_TICKER", DATABASE_URL) is None
+    finally:
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute("DELETE FROM forecasts WHERE ticker = %s", (TICKER,))

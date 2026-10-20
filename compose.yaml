@@ -96,7 +96,24 @@ services:
     # Профиль jobs: `docker compose up` этот сервис не запускает сам;
     # его запускают явно — `docker compose run --rm loader`.
     profiles: ["jobs"]
-
+    # ---------- пакетный прогноз (разовая задача) ----------
+  predictor:
+    image: moex-vol:0.4.0
+    build: .
+    command: ["predict-vol"]
+    # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow.
+    environment:
+      DATABASE_URL: postgresql://moex:moex@db:5432/moex
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    # Признаки считаются по свечам из data/raw; CSV с прогнозом — в data/predictions.
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    profiles: ["jobs"]
 # Именованные тома: Docker сам хранит их данные; удаляются только явно (down -v).
 volumes:
   pgdata:

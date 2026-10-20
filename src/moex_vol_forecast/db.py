@@ -1,6 +1,6 @@
-"""Save candles to PostgreSQL."""
+"""Save candles and forecasts to PostgreSQL."""
 
-# Сохранение свечей в базу данных PostgreSQL.
+# Сохранение свечей и прогнозов в базу данных PostgreSQL.
 # Таблица candles: одна строка = одна дневная свеча одного тикера.
 # Запись идемпотентная: повторная загрузка тех же дней не создаёт дублей,
 # а обновляет строки («upsert» = update + insert).
@@ -9,6 +9,7 @@ import logging
 
 import pandas as pd
 import psycopg
+from psycopg.rows import dict_row
 
 logger = logging.getLogger(__name__)
 
@@ -75,3 +76,69 @@ def save_candles(df: pd.DataFrame, ticker: str, database_url: str) -> int:
             cur.executemany(UPSERT, rows)
     logger.info("upserted %d rows for %s into PostgreSQL", len(rows), ticker)
     return len(rows)
+
+
+# ---------- прогнозы ----------
+# Таблица forecasts: один прогноз = тикер + день свечи, по которой он посчитан
+# (as_of) + версия модели из реестра. Версия в ключе: если перевесить чемпиона
+# и запустить прогноз заново, прогнозы разных моделей лягут рядом, а не затрут
+# друг друга — потом их можно сравнить с тем, что случилось на самом деле.
+# created_at — когда строку записали; DEFAULT now() — база подставит время сама.
+CREATE_FORECASTS = """
+CREATE TABLE IF NOT EXISTS forecasts (
+    ticker        text             NOT NULL,
+    as_of         date             NOT NULL,
+    model_version integer          NOT NULL,
+    forecast_pk   double precision NOT NULL,
+    created_at    timestamptz      NOT NULL DEFAULT now(),
+    PRIMARY KEY (ticker, as_of, model_version)
+)
+"""
+
+UPSERT_FORECAST = """
+INSERT INTO forecasts (ticker, as_of, model_version, forecast_pk)
+VALUES (%s, %s, %s, %s)
+ON CONFLICT (ticker, as_of, model_version) DO UPDATE SET
+    forecast_pk = EXCLUDED.forecast_pk,
+    created_at = now()
+"""
+
+# Самый свежий прогноз тикера: сначала по дню свечи, при равенстве — по времени
+# записи. LIMIT 1 — только одна строка.
+LATEST_FORECAST = """
+SELECT ticker, as_of, model_version, forecast_pk, created_at
+FROM forecasts
+WHERE ticker = %s
+ORDER BY as_of DESC, created_at DESC
+LIMIT 1
+"""
+
+
+def save_forecasts(df: pd.DataFrame, model_version: str, database_url: str) -> int:
+    """Upsert forecasts (columns ticker, date, forecast_pk); return row count."""
+    rows = [
+        (ticker, day.date(), int(model_version), float(value))
+        for ticker, day, value in zip(
+            df["ticker"], df["date"], df["forecast_pk"], strict=True
+        )
+    ]
+    with psycopg.connect(database_url) as conn:
+        conn.execute(CREATE_FORECASTS)
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_FORECAST, rows)
+    logger.info(
+        "upserted %d forecasts of model version %s into PostgreSQL",
+        len(rows),
+        model_version,
+    )
+    return len(rows)
+
+
+def latest_forecast(ticker: str, database_url: str) -> dict | None:
+    """The newest stored forecast of a ticker as a dict, or None if there is none."""
+    # row_factory=dict_row — строки приходят словарями {"ticker": ..., ...},
+    # а не кортежами: так их удобно превращать в ответ API.
+    with psycopg.connect(database_url, row_factory=dict_row) as conn:
+        # Таблицы может ещё не быть, если пакетный прогноз ни разу не запускался.
+        conn.execute(CREATE_FORECASTS)
+        return conn.execute(LATEST_FORECAST, (ticker,)).fetchone()
