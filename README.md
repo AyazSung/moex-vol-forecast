@@ -13,9 +13,9 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 
 ## Roadmap
 - [x] Stage 0: project structure, configs, logging, tests
-- [ ] Stage 1: Docker
-- [ ] Stage 2: MLflow tracking and model registry
-- [ ] Stage 3: batch scoring + FastAPI service
+- [x] Stage 1: Docker
+- [x] Stage 2: MLflow tracking and model registry
+- [x] Stage 3: batch scoring + FastAPI service
 - [ ] Stage 4: Airflow orchestration
 - [ ] Stage 5: CI/CD
 - [ ] Stage 6: monitoring (drift, Grafana)
@@ -54,6 +54,17 @@ uv run train-model --model har               # train a model and log the run to 
 uv run train-model --model gbm --register    # also add the model to the registry
 uv run mlflow ui --port 5001                 # MLflow UI at http://localhost:5001
 uv run predict-vol                           # next-day forecast with the champion model
+```
+
+## Model serving (MLflow server, batch scoring, API)
+
+```bash
+docker compose exec db createdb -U moex mlflow     # once: a database for MLflow
+docker compose up -d db mlflow                     # MLflow UI at http://localhost:5001
+export MLFLOW_TRACKING_URI=http://localhost:5001   # train and register into the server
+uv run train-model --model har --register
+docker compose run --rm predictor                  # batch forecasts into the forecasts table
+docker compose up -d api                           # API at http://localhost:8000/docs
 ```
 
 

@@ -1,9 +1,13 @@
 # compose.yaml — описание нескольких контейнеров, которые работают вместе.
-# Одна команда поднимает всё сразу:  docker compose up -d db
-# Загрузчик запускается как разовая задача:  docker compose run --rm loader
+# Постоянно работающие сервисы (база, сервер MLflow, API):
+#   docker compose up -d db mlflow api
+# Разовые задачи (профиль jobs):
+#   docker compose run --rm loader             — загрузить свечи с биржи
+#   docker compose run --rm loader import-candles — загрузить CSV в базу
+#   docker compose run --rm predictor          — пакетный прогноз в базу
 #
 # Внутри compose все сервисы находятся в общей сети и находят друг друга по имени
-# сервиса: загрузчик обращается к базе по адресу db:5432, а не localhost.
+# сервиса: к базе обращаются по адресу db:5432, к MLflow — mlflow:5000.
 # Отступы в YAML важны: они показывают вложенность, как в Python.
 
 services:
@@ -33,6 +37,7 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
@@ -76,9 +81,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-  # ---------- загрузчик свечей ----------
+
+  # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    # Готовый образ. Если его нет, compose соберёт его по Dockerfile (build: .).
     image: moex-vol:0.4.0
     build: .
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
@@ -96,7 +101,8 @@ services:
     # Профиль jobs: `docker compose up` этот сервис не запускает сам;
     # его запускают явно — `docker compose run --rm loader`.
     profiles: ["jobs"]
-    # ---------- пакетный прогноз (разовая задача) ----------
+
+  # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
     image: moex-vol:0.4.0
     build: .
@@ -114,6 +120,30 @@ services:
       mlflow:
         condition: service_healthy
     profiles: ["jobs"]
+
+  # ---------- API на FastAPI ----------
+  api:
+    image: moex-vol:0.4.0
+    build: .
+    # uvicorn — веб-сервер, который запускает приложение app из модуля api.
+    # --host 0.0.0.0 — принимать запросы не только изнутри контейнера.
+    command:
+      - uvicorn
+      - moex_vol_forecast.api:app
+      - --host=0.0.0.0
+      - --port=8000
+    environment:
+      DATABASE_URL: postgresql://moex:moex@db:5432/moex
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    # API на Mac: http://localhost:8000, документация — http://localhost:8000/docs
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+
 # Именованные тома: Docker сам хранит их данные; удаляются только явно (down -v).
 volumes:
   pgdata:

@@ -26,11 +26,13 @@ requires-python = ">=3.13"
 # Библиотеки, без которых загрузчик не работает. ">=" значит «эта версия или новее».
 # Добавлять: `uv add имя`. Точные установленные версии записаны в uv.lock.
 dependencies = [
+    "fastapi>=0.143.1",
     "mlflow>=3.17.1",
     "pandas>=3.0.6",
     "psycopg[binary]>=3.3.6",
     "requests>=2.34.2",
     "scikit-learn>=1.9.1",
+    "uvicorn>=0.54.0",
 ]
 
 # Команды терминала, которые появляются после установки пакета.
@@ -51,6 +53,7 @@ build-backend = "uv_build"
 # В Docker-образ не ставятся: там `uv sync --no-dev`.
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.1",
     "pytest>=9.1.1",
     "ruff>=0.17.0",
 ]
