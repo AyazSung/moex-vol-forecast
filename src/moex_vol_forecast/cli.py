@@ -15,7 +15,7 @@ from moex_vol_forecast.config import load_settings
 from moex_vol_forecast.db import save_candles
 from moex_vol_forecast.logging_setup import setup_logging
 from moex_vol_forecast.moex import fetch_candles
-from moex_vol_forecast.storage import write_csv_atomic
+from moex_vol_forecast.storage import merge_candles, read_candles, write_csv_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,13 @@ def main() -> None:
         # Путь к файлу: <папка данных>/raw/<тикер>.csv, например data/raw/sber.csv.
         # "/" у Path склеивает части пути.
         out_path = settings.data_dir / "raw" / f"{settings.ticker.lower()}.csv"
-        write_csv_atomic(candles, out_path)
+        # Файл уже есть — дописываем свежие свечи к истории, а не затираем её:
+        # так загрузку можно запускать каждый день за последнюю неделю.
+        if out_path.exists():
+            history = merge_candles(read_candles(out_path), candles)
+        else:
+            history = candles
+        write_csv_atomic(history, out_path)
         # Задан адрес базы — дополнительно сохранить свечи в PostgreSQL.
         if settings.database_url:
             save_candles(candles, settings.ticker, settings.database_url)

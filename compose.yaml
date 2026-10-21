@@ -41,7 +41,7 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: moex-vol:0.4.0
+    image: moex-vol:0.5.0
     build: .
     # Команда вместо CMD образа — запустить сервер MLflow:
     #   --backend-store-uri     — где журнал: база mlflow в нашей PostgreSQL
@@ -84,13 +84,16 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: moex-vol:0.4.0
+    image: moex-vol:0.5.0
     build: .
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
     # Адрес базы: хост db — это имя сервиса выше, а не localhost.
+    # TZ — часовой пояс контейнера: время в логах — московское, как на бирже.
+    # Без него в контейнере UTC (этап 1, часть 2).
     environment:
       DATABASE_URL: postgresql://moex:moex@db:5432/moex
+      TZ: Europe/Moscow
     # Папка data проекта подключается внутрь, как -v в docker run.
     volumes:
       - ./data:/app/data
@@ -104,13 +107,16 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: moex-vol:0.4.0
+    image: moex-vol:0.5.0
     build: .
     command: ["predict-vol"]
     # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow.
+    # TZ — «сегодня» по Москве. В UTC ночной запуск в 00:15 МСК попал бы ещё во
+    # вчерашний день, и код отбросил бы только что закрытую свечу как незакрытую.
     environment:
       DATABASE_URL: postgresql://moex:moex@db:5432/moex
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      TZ: Europe/Moscow
     # Признаки считаются по свечам из data/raw; CSV с прогнозом — в data/predictions.
     volumes:
       - ./data:/app/data
@@ -123,7 +129,7 @@ services:
 
   # ---------- API на FastAPI ----------
   api:
-    image: moex-vol:0.4.0
+    image: moex-vol:0.5.0
     build: .
     # uvicorn — веб-сервер, который запускает приложение app из модуля api.
     # --host 0.0.0.0 — принимать запросы не только изнутри контейнера.

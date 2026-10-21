@@ -16,6 +16,7 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 import pandas as pd
@@ -100,9 +101,11 @@ async def lifespan(app: FastAPI):
 
 # docs_url=None, redoc_url=None — выключаем страницы документации со ссылками
 # на CDN; свою /docs, на локальных файлах, объявляем ниже.
+# version — версия нашего пакета из pyproject.toml: package_version читает её из
+# установленного пакета, и после `uv version --bump` она обновится сама.
 app = FastAPI(
     title="moex-vol",
-    version="0.4.0",
+    version=package_version("moex-vol-forecast"),
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,

@@ -15,7 +15,7 @@
 # (или patch / major): она меняет версию и здесь, и в uv.lock.
 # Если поменять только здесь, сборка Docker-образа упадёт на `uv sync --locked`.
 name = "moex-vol-forecast"
-version = "0.4.0"
+version = "0.5.0"
 description = "Daily volatility forecast for MOEX stocks"
 readme = "README.md"
 authors = [
