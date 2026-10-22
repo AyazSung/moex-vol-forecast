@@ -16,7 +16,7 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 - [x] Stage 1: Docker
 - [x] Stage 2: MLflow tracking and model registry
 - [x] Stage 3: batch scoring + FastAPI service
-- [ ] Stage 4: Airflow orchestration
+- [x] Stage 4: Airflow orchestration
 - [ ] Stage 5: CI/CD
 - [ ] Stage 6: monitoring (drift, Grafana)
 
@@ -67,13 +67,25 @@ docker compose run --rm predictor                  # batch forecasts into the fo
 docker compose up -d api                           # API at http://localhost:8000/docs
 ```
 
+## Orchestration (Airflow)
 
-## Schedule
+Airflow 3 runs on the Mac in its own environment (`~/airflow/.venv`). The DAGs live in `dags/` and start the project's Docker jobs.
 
-On a server the fetch job runs daily at 00:15 MSK, after the evening session closes, so the previous day's candle is final:
-
+```bash
+./scripts/airflow.sh                                 # Airflow UI at http://localhost:8080, stop with Ctrl+C
+./scripts/airflow.sh dags list-runs moex_vol_daily   # runs of a DAG from the terminal
 ```
-PATH=/path/to/python/bin:/usr/bin:/bin
-P=/path/to/moex-vol-forecast
-15 0 * * * $P/scripts/fetch_candles.sh >> $P/logs/fetch.log 2>&1
+
+| DAG | Schedule (Moscow time) | Steps |
+|---|---|---|
+| `moex_vol_daily` | 00:15, Tue–Sat | fetch the last week of candles for 21 tickers (3 at a time, 2 retries) → batch forecast → check that all 21 tickers got a fresh forecast |
+| `moex_vol_retrain` | 02:00, Sat | train a candidate on all data except the last 13 weeks → compare it with the champion on those 13 weeks → move the `champion` alias if the candidate is at least 1% better → restart the API if it serves an old version → check the API |
+
+The champion/challenger step by hand:
+
+```bash
+docker compose run --rm trainer train-model --model har --register --test-start "$(date -v-13w +%F)"
+docker compose run --rm trainer promote-model        # --min-improvement 0.01 by default
 ```
+
+Every candidate version gets tags in the MLflow registry: the comparison window, both metrics and the decision (`promoted` or `kept`).
