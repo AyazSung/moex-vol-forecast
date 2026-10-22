@@ -1,0 +1,44 @@
+# dependabot.yml — Dependabot (этап 5): раз в неделю проверяет, не вышли ли
+# новые версии зависимостей, и открывает pull request с обновлением. Каждый такой
+# pull request проходит те же проверки CI, что и твой, — сливаешь ты сам.
+#
+#   uv             — библиотеки Python из pyproject.toml и uv.lock;
+#   github-actions — версии действий в .github/workflows (checkout, setup-uv, docker/…);
+#   pre-commit     — версии готовых проверок в .pre-commit-config.yaml.
+#
+# Образы python:3.13-slim (Dockerfile) и postgres:18 (compose.yaml) сюда не входят:
+# мелкие исправления они получают сами при пересборке и docker pull, а переход на
+# Python 3.14 или PostgreSQL 19 — отдельное решение, не рутинное обновление.
+
+version: 2
+
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    # Не предлагать версии моложе 14 дней: в свежих выпусках чаще находят ошибки,
+    # а через две недели их обычно уже исправили.
+    cooldown:
+      default-days: 14
+    # Все обновления библиотек — одним pull request, а не десятком отдельных.
+    groups:
+      python-packages:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

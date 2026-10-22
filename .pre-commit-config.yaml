@@ -1,0 +1,45 @@
+# .pre-commit-config.yaml — проверки перед каждым коммитом (этап 5).
+#
+# pre-commit запускает их сам при `git commit`, только для файлов этого коммита.
+# Не прошло — коммит не создаётся, а в выводе видно, что не так. Это та же
+# проверка, что в CI, но на минуту раньше и у тебя на Mac.
+#
+# Поставить в клон один раз:   uv run pre-commit install
+# Прогнать по всем файлам:     uv run pre-commit run --all-files
+
+repos:
+  # Готовые проверки от авторов pre-commit. rev — версия: её обновляет Dependabot.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # YAML без ошибок: compose.yaml, ci.yml, dependabot.yml, этот файл.
+      - id: check-yaml
+      # Не закоммитить случайно большой файл (больше 500 КБ): CSV со свечами,
+      # файл модели, дамп базы.
+      - id: check-added-large-files
+      # Не закоммитить недоразрешённый конфликт слияния с маркерами <<<<<<<.
+      - id: check-merge-conflict
+
+  # Свои проверки: тот же ruff той же версии, что в uv.lock, — как в CI.
+  #   language: system — запускать как обычную команду терминала;
+  #   types: [python]  — только для файлов .py из коммита.
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+      # uv.lock соответствует pyproject.toml — иначе CI упадёт на uv sync --locked.
+      # pass_filenames: false — команде не нужны имена файлов, она проверяет проект.
+      - id: uv-lock
+        name: uv lock --check
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false

@@ -28,6 +28,18 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks e
 
 When the checks pass, the `image` job builds the Docker image for `linux/amd64` and `linux/arm64`. Builds from `main` are pushed to GitHub Container Registry as `ghcr.io/ayazsung/moex-vol` with the tags `main` (the latest `main`) and `sha-<commit>`; pull requests only build the image.
 
+## Development
+
+`main` is protected: every change goes through a pull request, which can be merged only when the `checks` and `image` CI jobs pass.
+
+```bash
+uv sync                        # environment with the dev tools
+uv run pre-commit install      # run ruff and file checks before every commit
+git switch -c my-change        # work in a branch, push it and open a pull request
+```
+
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) opens weekly pull requests with updates of Python packages, GitHub Actions and pre-commit hooks; releases younger than 14 days are skipped.
+
 ## Run locally
 
 ```bash
