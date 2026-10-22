@@ -19,6 +19,9 @@ services:
   db:
     # Официальный образ PostgreSQL 18.
     image: postgres:18
+    # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
+    # руками (docker compose stop) сервис так и останется остановленным.
+    restart: unless-stopped
     # Переменные, по которым образ при первом запуске создаёт пользователя и базу.
     # Пароль прямо в файле допустим только для учебной базы на своём компьютере:
     # в проде пароли хранят в .env или в хранилище секретов, а не в Git.
@@ -26,10 +29,11 @@ services:
       POSTGRES_USER: moex
       POSTGRES_PASSWORD: moex
       POSTGRES_DB: moex
-    # Проброс порта "порт_на_Mac:порт_в_контейнере": база доступна с Mac
-    # по адресу localhost:5432 (например, для uv run и тестов).
+    # Проброс порта "адрес:порт_на_Mac:порт_в_контейнере": база доступна с Mac
+    # по адресу localhost:5432 (например, для uv run и тестов). 127.0.0.1 —
+    # только с этого Mac: без него порт открыт всей сети Wi-Fi, а пароль учебный.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     # Данные базы хранятся в томе pgdata — он переживает удаление контейнера.
     # Для PostgreSQL 18 том подключают к /var/lib/postgresql.
     volumes:
@@ -45,8 +49,11 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: moex-vol:0.6.0
+    image: moex-vol:0.6.1
     build: .
+    # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
+    # руками (docker compose stop) сервис так и останется остановленным.
+    restart: unless-stopped
     # Команда вместо CMD образа — запустить сервер MLflow:
     #   --backend-store-uri     — где журнал: база mlflow в нашей PostgreSQL
     #                             (postgresql+psycopg — через драйвер psycopg);
@@ -66,8 +73,10 @@ services:
       - --artifacts-destination=/app/mlartifacts
       - --allowed-hosts=mlflow:5000,localhost:*,127.0.0.1:*
     # Интерфейс MLflow на Mac: http://localhost:5001 (порт 5000 на Mac занят AirPlay).
+    # 127.0.0.1 — только с этого Mac: входа по паролю у MLflow нет, и из сети
+    # кто угодно мог бы, например, перевесить чемпиона.
     ports:
-      - "5001:5000"
+      - "127.0.0.1:5001:5000"
     # Файлы моделей — в томе mlartifacts: переживают удаление контейнера.
     volumes:
       - mlartifacts:/app/mlartifacts
@@ -88,7 +97,7 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: moex-vol:0.6.0
+    image: moex-vol:0.6.1
     build: .
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
@@ -111,7 +120,7 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: moex-vol:0.6.0
+    image: moex-vol:0.6.1
     build: .
     command: ["predict-vol"]
     # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow.
@@ -133,7 +142,7 @@ services:
 
   # ---------- обучение и выбор чемпиона (разовые задачи) ----------
   trainer:
-    image: moex-vol:0.6.0
+    image: moex-vol:0.6.1
     build: .
     # Команда по умолчанию — обучение. Другую команду пишут при запуске, и она
     # заменяет эту целиком: docker compose run --rm trainer promote-model
@@ -158,8 +167,11 @@ services:
 
   # ---------- API на FastAPI ----------
   api:
-    image: moex-vol:0.6.0
+    image: moex-vol:0.6.1
     build: .
+    # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
+    # руками (docker compose stop) сервис так и останется остановленным.
+    restart: unless-stopped
     # uvicorn — веб-сервер, который запускает приложение app из модуля api.
     # --host 0.0.0.0 — принимать запросы не только изнутри контейнера.
     command:
@@ -167,12 +179,15 @@ services:
       - moex_vol_forecast.api:app
       - --host=0.0.0.0
       - --port=8000
+    # TZ — время в логах API московское, как у задач загрузки и прогноза.
     environment:
       DATABASE_URL: postgresql://moex:moex@db:5432/moex
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      TZ: Europe/Moscow
     # API на Mac: http://localhost:8000, документация — http://localhost:8000/docs
+    # 127.0.0.1 — только с этого Mac, как у базы и MLflow.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy

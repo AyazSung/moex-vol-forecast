@@ -86,10 +86,13 @@ def moex_vol_daily():
         trigger_rule="none_failed",
     )
 
-    # Проверка результата: за последний час записан прогноз для всех 21 тикера.
+    # Проверка результата: в этом запуске записан прогноз для всех 21 тикера.
     #   exec -T     — выполнить команду в работающем контейнере db без терминала:
     #                 у задачи Airflow терминала нет;
     #   -tAc        — psql печатает только число (этап 1, часть 5);
+    #   dag_run.start_date — когда начался этот запуск DAG-а: считаем только
+    #                 прогнозы, записанные после него. Прогнозы другого запуска,
+    #                 например ручного получасом раньше, не засчитаются;
     #   [ ... -ge ] — «не меньше»: если тикеров меньше, команда вернёт 1, и задача
     #                 упадёт — сбой будет виден в Airflow, а не останется незамеченным.
     check_forecasts = BashOperator(
@@ -98,7 +101,7 @@ def moex_vol_daily():
         bash_command=(
             "n=$(docker compose exec -T db psql -U moex -d moex -tAc "
             '"SELECT count(DISTINCT ticker) FROM forecasts '
-            "WHERE created_at > now() - interval '1 hour'\"); "
+            "WHERE created_at >= '{{ dag_run.start_date }}'\"); "
             'echo "tickers with fresh forecasts: $n"; '
             f'[ "$n" -ge {len(TICKERS)} ]'
         ),

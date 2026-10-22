@@ -20,6 +20,7 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 
 import pandas as pd
+import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
@@ -165,7 +166,13 @@ def get_forecast(ticker: str) -> StoredForecast:
     if not database_url:
         # 503 — «сервис временно не может ответить»: база не настроена.
         raise HTTPException(status_code=503, detail="DATABASE_URL is not set")
-    row = latest_forecast(ticker.upper(), database_url)
+    try:
+        row = latest_forecast(ticker.upper(), database_url)
+    except psycopg.Error as err:
+        # База не отвечает или отказала — тоже 503, а не 500 с трассировкой:
+        # клиенту понятно, что дело во временной недоступности, а не в его запросе.
+        logger.error("cannot read forecasts: %s", err)
+        raise HTTPException(status_code=503, detail="database is unavailable") from err
     if row is None:
         # 404 — «не найдено».
         raise HTTPException(status_code=404, detail=f"no forecast for {ticker.upper()}")

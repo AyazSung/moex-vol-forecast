@@ -3,6 +3,7 @@
 # прямо в памяти — сервер запускать не нужно.
 
 import numpy as np
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -85,6 +86,20 @@ def test_forecasts_without_database(client):
     response = client.get("/forecasts/sber")
 
     assert response.status_code == 503
+
+
+def test_forecasts_when_database_is_down(client, monkeypatch):
+    # База задана, но не отвечает: вместо 500 с трассировкой — понятный 503.
+    def database_down(ticker, database_url):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://moex:moex@localhost:1/moex")
+    monkeypatch.setattr(api, "latest_forecast", database_down)
+
+    response = client.get("/forecasts/sber")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "database is unavailable"}
 
 
 def test_docs_work_without_internet(client):

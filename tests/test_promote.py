@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from moex_vol_forecast.promote import score, should_promote
+from moex_vol_forecast.promote import score, should_promote, summary
 
 
 def test_first_model_becomes_champion():
@@ -43,3 +43,11 @@ def test_score_is_error_relative_to_naive_forecast():
     # Наивный прогноз (pk_1) ошибается на 0 и 0.02, его rmse = 0.02 / √2.
     # Модель (pk_1 / 2) — на 0.01 и 0, её rmse = 0.01 / √2: вдвое меньше.
     assert score(HalfModel(), window) == pytest.approx(0.5)
+
+
+def test_summary_names_the_champion():
+    # Решение — о кандидате, а в строке сразу видно, кто чемпион. Раньше было
+    # «kept version 5», и это читалось как «оставили версию 5».
+    assert summary(False, "5", "1") == "rejected version 5: champion stays version 1"
+    assert summary(True, "6", "1") == "promoted version 6: new champion, was version 1"
+    assert summary(True, "1", None) == "promoted version 1: the first champion"

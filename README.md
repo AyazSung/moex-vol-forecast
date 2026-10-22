@@ -31,10 +31,12 @@ Settings come from environment variables: `TICKER` (default `SBER`), `FROM_DATE`
 
 ## Docker
 
+One image, `moex-vol:<version>` (the version from `pyproject.toml`), runs every job and service described in `compose.yaml`. The services listen on localhost only.
+
 ```bash
-# image for both Mac (arm64) and typical servers (amd64)
-docker build --platform linux/amd64,linux/arm64 -t moex-loader:0.2.0 .
-docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-loader:0.2.0
+docker compose build                                        # build the image
+docker compose run --rm loader                              # one-off job: fetch candles (settings from .env)
+docker build --platform linux/amd64,linux/arm64 -t moex-vol:0.6.1 .   # also for typical servers (amd64)
 ```
 
 ## Database (docker compose)
@@ -88,4 +90,4 @@ docker compose run --rm trainer train-model --model har --register --test-start 
 docker compose run --rm trainer promote-model        # --min-improvement 0.01 by default
 ```
 
-Every candidate version gets tags in the MLflow registry: the comparison window, both metrics and the decision (`promoted` or `kept`).
+Every candidate version gets tags in the MLflow registry: the comparison window, both metrics and the decision (`promoted` or `rejected`).

@@ -10,8 +10,8 @@
 # --min-improvement (по умолчанию 1%): меньшая разница может оказаться случайной,
 # и менять модель ради неё не стоит.
 #
-# Решение — promoted (стал чемпионом) или kept (чемпион прежний) — видно в логе и
-# в тегах версии в реестре MLflow.
+# Решение о кандидате — promoted (стал чемпионом) или rejected (отклонён, чемпион
+# прежний) — видно в логе и в тегах версии в реестре MLflow.
 #
 # Примеры (в Docker, как остальные задачи проекта):
 #   docker compose run --rm trainer promote-model                    # последняя версия
@@ -62,6 +62,17 @@ def should_promote(
     return candidate < champion * (1 - min_improvement)
 
 
+def summary(promote: bool, candidate: str, champion: str | None) -> str:
+    """One log line about the decision that names the champion explicitly."""
+    # Номер кандидата и номер чемпиона — в одной строке: по ней сразу видно, какая
+    # версия теперь строит прогнозы.
+    if not promote:
+        return f"rejected version {candidate}: champion stays version {champion}"
+    if champion is None:
+        return f"promoted version {candidate}: the first champion"
+    return f"promoted version {candidate}: new champion, was version {champion}"
+
+
 def first_test_day(client: MlflowClient, version: str) -> str:
     """Start of the test period of the run that trained the version."""
     # Обучение записывает test_start в параметры запуска (train.py), например
@@ -101,7 +112,7 @@ def decide(client: MlflowClient, raw_dir: Path, args: argparse.Namespace) -> Non
     candidate_score = score(load_version(candidate), window)
     champion_score = score(load_version(champion), window) if champion else None
     promote = should_promote(candidate_score, champion_score, args.min_improvement)
-    decision = "promoted" if promote else "kept"
+    decision = "promoted" if promote else "rejected"
     logger.info(
         "window from %s: %d rows; candidate version %s rmse_to_naive=%.4f; "
         "champion version %s rmse_to_naive=%s",
@@ -129,7 +140,7 @@ def decide(client: MlflowClient, raw_dir: Path, args: argparse.Namespace) -> Non
     if promote:
         # Перевесить псевдоним: прогнозы пойдут от кандидата.
         client.set_registered_model_alias(MODEL_NAME, CHAMPION, candidate)
-    logger.info("%s version %s", decision, candidate)
+    logger.info("%s", summary(promote, candidate, champion))
 
 
 def main() -> None:

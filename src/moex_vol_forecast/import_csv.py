@@ -7,12 +7,12 @@
 import logging
 import sys
 
-import pandas as pd
 import psycopg
 
 from moex_vol_forecast.config import load_settings
 from moex_vol_forecast.db import save_candles
 from moex_vol_forecast.logging_setup import setup_logging
+from moex_vol_forecast.storage import read_candles
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,12 @@ def main() -> None:
         for path in files:
             # path.stem — имя файла без расширения: sber.csv -> sber -> SBER.
             ticker = path.stem.upper()
-            df = pd.read_csv(path, sep=";")
+            # read_candles — тем же способом, что загрузчик: числа ровно как в файле.
+            df = read_candles(path)
             total += save_candles(df, ticker, settings.database_url)
-    # Ожидаемые ошибки: файл не читается (OSError) или база недоступна (psycopg.Error).
-    except (OSError, psycopg.Error) as err:
+    # Ожидаемые ошибки: файл не читается (OSError), в файле не те данные
+    # (ValueError: например, обрезанный CSV) или база недоступна (psycopg.Error).
+    except (OSError, ValueError, psycopg.Error) as err:
         logger.error("%s", err)
         sys.exit(1)
 
