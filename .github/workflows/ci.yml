@@ -1,9 +1,12 @@
-# ci.yml — автоматические проверки на GitHub Actions (этап 5).
+# ci.yml — автоматические проверки и сборка образа на GitHub Actions (этап 5).
 #
 # На каждый push в main и на каждый pull request GitHub берёт чистую виртуальную
 # машину с Linux, скачивает код репозитория и проверяет его так же, как ты перед
 # коммитом:
 #   uv sync --locked → ruff check → ruff format --check → pytest (вместе с тестами базы)
+# Если проверки прошли, вторая работа собирает Docker-образ проекта для двух
+# процессоров (amd64 и arm64). Из main образ публикуется в GitHub Container
+# Registry: ghcr.io/ayazsung/moex-vol. В pull request — только сборка, без публикации.
 # Результат виден у коммита на GitHub: зелёная галочка или красный крестик.
 
 # Имя workflow на вкладке Actions и в значке README.
@@ -21,8 +24,14 @@ on:
 
 # Права ключа, который GitHub выдаёт каждому запуску: только читать код.
 # Проверкам больше не нужно — минимум прав, как у пользователя app в образе.
+# Работа image ниже просит себе ещё одно право — публиковать образы.
 permissions:
   contents: read
+
+# Адрес образа в GitHub Container Registry. Имя — только строчными буквами:
+# реестр не принимает заглавные, поэтому не AyazSung, а ayazsung.
+env:
+  IMAGE: ghcr.io/ayazsung/moex-vol
 
 jobs:
   # Одна работа (job) — все проверки по очереди на одной машине.
@@ -81,3 +90,68 @@ jobs:
 
       - name: Tests
         run: uv run pytest
+
+  # Вторая работа — Docker-образ. Отдельная машина, отдельные права.
+  image:
+    # Только после успешных проверок: образ кода, который не прошёл тесты,
+    # собирать и публиковать незачем.
+    needs: checks
+    runs-on: ubuntu-latest
+    # Сборка под чужой процессор идёт через эмуляцию и дольше обычной.
+    timeout-minutes: 30
+    # packages: write — право публиковать образы в GitHub Container Registry.
+    # Только этой работе: проверкам выше оно не нужно.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # QEMU — эмулятор процессоров: машина GitHub с amd64 сможет собрать
+      # и вариант образа для arm64 (Mac на Apple Silicon).
+      - uses: docker/setup-qemu-action@v4
+
+      # Buildx — сборщик Docker, который умеет собирать образ сразу под несколько
+      # процессоров и хранить кэш слоёв между запусками.
+      - uses: docker/setup-buildx-action@v4
+
+      # Вход в реестр ghcr.io ключом запуска GITHUB_TOKEN: свой пароль не нужен.
+      # В pull request образ не публикуется, поэтому и вход не нужен.
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Теги и метки образа по событию:
+      #   type=ref,event=branch — из main: тег main (всегда последний образ main);
+      #   type=ref,event=pr     — из pull request №7: тег pr-7;
+      #   type=sha              — тег по коммиту: sha-e466154, его не перезапишут.
+      # Метки (labels) — сведения внутри образа: ссылка на репозиторий, коммит,
+      # время сборки. По ссылке на репозиторий GitHub связывает образ с проектом.
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+
+      # Сборка по Dockerfile проекта для двух процессоров; из main — публикация.
+      #   cache-from / cache-to — кэш слоёв в хранилище GitHub Actions: слой
+      #   с библиотеками пересобирается, только когда меняется uv.lock.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

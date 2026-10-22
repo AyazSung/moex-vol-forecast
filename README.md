@@ -26,6 +26,8 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks every push to `main` and every pull request on a clean Ubuntu machine: `uv sync --locked`, `ruff check`, `ruff format --check` and `pytest`, including the database tests against a PostgreSQL 18 service container.
 
+When the checks pass, the `image` job builds the Docker image for `linux/amd64` and `linux/arm64`. Builds from `main` are pushed to GitHub Container Registry as `ghcr.io/ayazsung/moex-vol` with the tags `main` (the latest `main`) and `sha-<commit>`; pull requests only build the image.
+
 ## Run locally
 
 ```bash
