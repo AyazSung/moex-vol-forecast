@@ -5,6 +5,10 @@
 #   docker compose run --rm loader             — загрузить свечи с биржи
 #   docker compose run --rm loader import-candles — загрузить CSV в базу
 #   docker compose run --rm predictor          — пакетный прогноз в базу
+#   docker compose run --rm trainer train-model --model har --register ...
+#                                              — обучить модель-кандидата
+#   docker compose run --rm trainer promote-model — сделать кандидата чемпионом,
+#                                              если он лучше
 #
 # Внутри compose все сервисы находятся в общей сети и находят друг друга по имени
 # сервиса: к базе обращаются по адресу db:5432, к MLflow — mlflow:5000.
@@ -41,7 +45,7 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: moex-vol:0.5.0
+    image: moex-vol:0.6.0
     build: .
     # Команда вместо CMD образа — запустить сервер MLflow:
     #   --backend-store-uri     — где журнал: база mlflow в нашей PostgreSQL
@@ -84,7 +88,7 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: moex-vol:0.5.0
+    image: moex-vol:0.6.0
     build: .
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
@@ -107,7 +111,7 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: moex-vol:0.5.0
+    image: moex-vol:0.6.0
     build: .
     command: ["predict-vol"]
     # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow.
@@ -127,9 +131,34 @@ services:
         condition: service_healthy
     profiles: ["jobs"]
 
+  # ---------- обучение и выбор чемпиона (разовые задачи) ----------
+  trainer:
+    image: moex-vol:0.6.0
+    build: .
+    # Команда по умолчанию — обучение. Другую команду пишут при запуске, и она
+    # заменяет эту целиком: docker compose run --rm trainer promote-model
+    command: ["train-model"]
+    # Модели и метрики — на сервер MLflow. TZ — «сегодня» по Москве: незакрытая
+    # свеча сегодняшнего дня отбрасывается и при обучении (часть 2).
+    # GIT_PYTHON_REFRESH=quiet — MLflow пытается записать коммит Git, из которого
+    # запущено обучение, но программы git в образе нет. Без этой настройки на
+    # каждый запуск — три длинных предупреждения об этом.
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      TZ: Europe/Moscow
+      GIT_PYTHON_REFRESH: quiet
+    # Свечи из data/raw обучение только читает: :ro — «только для чтения»,
+    # контейнер не сможет ничего в этой папке изменить.
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    profiles: ["jobs"]
+
   # ---------- API на FastAPI ----------
   api:
-    image: moex-vol:0.5.0
+    image: moex-vol:0.6.0
     build: .
     # uvicorn — веб-сервер, который запускает приложение app из модуля api.
     # --host 0.0.0.0 — принимать запросы не только изнутри контейнера.

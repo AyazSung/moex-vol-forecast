@@ -2,8 +2,8 @@
 # загрузчик (fetch-candles, import-candles), обучение и прогноз (train-model,
 # predict-vol), API (uvicorn) и сервер MLflow. Какую запустить, решает
 # docker compose (command: у каждого сервиса) или аргумент после имени образа.
-# Сборка:  docker compose build   (или: docker build -t moex-vol:0.5.0 .)
-# Запуск:  docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-vol:0.5.0
+# Сборка:  docker compose build   (или: docker build -t moex-vol:0.6.0 .)
+# Запуск:  docker run --rm -v "$(pwd)/data:/app/data" --env-file .env moex-vol:0.6.0
 #
 # Образ собирается в две стадии:
 #   1) builder («мастерская») — ставим библиотеки и наш код в окружение .venv;

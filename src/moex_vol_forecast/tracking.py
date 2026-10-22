@@ -31,9 +31,11 @@ def setup_tracking() -> None:
 
 
 # frozen=True — объект нельзя изменить после создания, как кортеж.
+# Так же, через Champion, загружается и кандидат, когда его сравнивают с
+# чемпионом (promote.py): у обоих одна и та же работа — прогноз по своим столбцам.
 @dataclass(frozen=True)
 class Champion:
-    """The champion model together with its registry version and input columns."""
+    """A loaded model version with its registry number and input columns."""
 
     model: mlflow.pyfunc.PyFuncModel
     version: str
@@ -46,6 +48,14 @@ class Champion:
         return self.model.predict(features[self.columns])
 
 
+def load_version(version: str) -> Champion:
+    """Load one version of the registered model, for example "3"."""
+    model = mlflow.pyfunc.load_model(f"models:/{MODEL_NAME}/{version}")
+    # Какие столбцы ждёт модель — MLflow сохранил это при обучении (input_example).
+    columns = model.metadata.get_input_schema().input_names()
+    return Champion(model=model, version=version, columns=columns)
+
+
 def load_champion() -> Champion:
     """Load the model version that currently has the champion alias."""
     client = MlflowClient()
@@ -53,7 +63,4 @@ def load_champion() -> Champion:
     # Так номер в прогнозе точно совпадает с моделью, которой он посчитан,
     # даже если псевдоним перевесят в ту же секунду.
     version = client.get_model_version_by_alias(MODEL_NAME, CHAMPION).version
-    model = mlflow.pyfunc.load_model(f"models:/{MODEL_NAME}/{version}")
-    # Какие столбцы ждёт модель — MLflow сохранил это при обучении (input_example).
-    columns = model.metadata.get_input_schema().input_names()
-    return Champion(model=model, version=version, columns=columns)
+    return load_version(version)
