@@ -1,0 +1,83 @@
+# ci.yml — автоматические проверки на GitHub Actions (этап 5).
+#
+# На каждый push в main и на каждый pull request GitHub берёт чистую виртуальную
+# машину с Linux, скачивает код репозитория и проверяет его так же, как ты перед
+# коммитом:
+#   uv sync --locked → ruff check → ruff format --check → pytest (вместе с тестами базы)
+# Результат виден у коммита на GitHub: зелёная галочка или красный крестик.
+
+# Имя workflow на вкладке Actions и в значке README.
+name: CI
+
+# Когда запускать:
+#   push в main       — проверить то, что уже попало в основную ветку;
+#   pull_request      — проверить изменения до того, как их вольют в main (часть 3);
+#   workflow_dispatch — кнопка «Run workflow» на вкладке Actions: запуск вручную.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Права ключа, который GitHub выдаёт каждому запуску: только читать код.
+# Проверкам больше не нужно — минимум прав, как у пользователя app в образе.
+permissions:
+  contents: read
+
+jobs:
+  # Одна работа (job) — все проверки по очереди на одной машине.
+  checks:
+    # Чистая машина GitHub с Ubuntu; после работы её уничтожат.
+    runs-on: ubuntu-latest
+    # Предохранитель: зависший запуск остановится через 15 минут, а не через 6 часов.
+    timeout-minutes: 15
+
+    # Сервисный контейнер — PostgreSQL рядом с машиной проверок, как db в compose.
+    # Он нужен двум тестам из tests/test_db.py: без базы они пропускаются.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: moex
+          POSTGRES_PASSWORD: moex
+          POSTGRES_DB: moex
+        # Порт базы на машине проверок: тесты ходят на localhost:5432.
+        ports:
+          - 5432:5432
+        # Проверка здоровья, как healthcheck в compose: GitHub ждёт, пока база
+        # начнёт принимать подключения, и только потом запускает шаги.
+        options: >-
+          --health-cmd "pg_isready -U moex -d moex"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    # Адрес базы для tests/test_db.py. Пароль учебный: база живёт только
+    # во время запуска и снаружи недоступна.
+    env:
+      TEST_DATABASE_URL: postgresql://moex:moex@localhost:5432/moex
+
+    steps:
+      # Скачать код репозитория на машину проверок.
+      - uses: actions/checkout@v7
+
+      # Поставить uv той же версии, что на Mac, и включить кэш скачанных
+      # библиотек: следующие запуски не качают их заново.
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
+          enable-cache: true
+
+      # Окружение строго по uv.lock: --locked упадёт, если uv.lock устарел
+      # относительно pyproject.toml. Python 3.13 uv поставит сам (.python-version).
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Check formatting
+        run: uv run ruff format --check
+
+      - name: Tests
+        run: uv run pytest

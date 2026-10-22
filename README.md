@@ -1,5 +1,7 @@
 # moex-vol-forecast
 
+[![CI](https://github.com/AyazSung/moex-vol-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/AyazSung/moex-vol-forecast/actions/workflows/ci.yml)
+
 Daily volatility forecast for MOEX stocks — end-to-end ML pipeline.
 
 ## Goal
@@ -19,6 +21,10 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 - [x] Stage 4: Airflow orchestration
 - [ ] Stage 5: CI/CD
 - [ ] Stage 6: monitoring (drift, Grafana)
+
+## CI
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks every push to `main` and every pull request on a clean Ubuntu machine: `uv sync --locked`, `ruff check`, `ruff format --check` and `pytest`, including the database tests against a PostgreSQL 18 service container.
 
 ## Run locally
 
