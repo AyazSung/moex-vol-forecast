@@ -1,0 +1,110 @@
+"""Daily pipeline: fetch candles of 21 tickers, forecast, check the result."""
+
+# Ежедневный конвейер проекта:
+#
+#   fetch_candles ×21 → predict → check_forecasts
+#
+# Каждая задача — команда docker compose в папке проекта. Airflow решает, что и
+# когда запускать, а работу делают те же контейнеры, что мы запускали руками на
+# этапе 3: loader (загрузка свечей) и predictor (пакетный прогноз).
+
+from datetime import timedelta
+from pathlib import Path
+
+import pendulum
+from airflow.providers.standard.operators.bash import BashOperator
+from airflow.sdk import Param, dag
+
+# Папка проекта: здесь лежит compose.yaml, из неё задачи запускают docker compose.
+PROJECT_DIR = str(Path(__file__).resolve().parents[1])
+
+# Тикеры, свечи которых лежат в data/raw.
+TICKERS = [
+    "AFLT", "ALRS", "CHMF", "GAZP", "GMKN", "HYDR", "IRAO",
+    "LKOH", "MAGN", "MGNT", "MOEX", "MTSS", "NLMK", "NVTK",
+    "PHOR", "PLZL", "ROSN", "SBER", "SNGS", "TATN", "VTBR",
+]  # fmt: skip
+
+
+@dag(
+    # Расписание в формате cron (день 2): в 00:15 со вторника по субботу — после
+    # торгов понедельника–пятницы, когда дневная свеча уже закрыта. Часовой пояс
+    # расписания берётся из start_date: время — московское.
+    schedule="15 0 * * 2-6",
+    start_date=pendulum.datetime(2026, 10, 1, tz="Europe/Moscow"),
+    # Не догонять все пропущенные дни: прогноз всегда строится по последним
+    # свечам, и запуски «за прошлые даты» дали бы тот же самый результат.
+    catchup=False,
+    # Не начинать новый запуск, пока не закончился предыдущий.
+    max_active_runs=1,
+    # Настройки для всех задач: при сбое ещё две попытки с паузой в минуту.
+    # Биржа или Docker могут ненадолго не ответить — повтор часто помогает.
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=1)},
+    # Параметры запуска: их можно поменять в форме при запуске кнопкой.
+    # fetch = false — не ходить на биржу, посчитать прогноз по уже скачанным свечам.
+    params={
+        "fetch": Param(True, type="boolean", description="fetch candles from MOEX"),
+    },
+    tags=["moex"],
+)
+def moex_vol_daily():
+    # Загрузка — отдельная задача на каждый тикер: из одного описания Airflow
+    # сделает 21 задачу. .partial(...) — что общее у всех, .expand(...) — что
+    # меняется: здесь переменная окружения TICKER.
+    #   {{ ... }}           — шаблон: Airflow подставит значение перед запуском;
+    #   params.fetch        — параметр запуска; false → exit 99, и благодаря
+    #                         skip_on_exit_code=99 задача станет пропущенной
+    #                         (skipped), а не упавшей;
+    #   FROM_DATE           — неделя до времени запуска (dag_run.run_after):
+    #                         последние дни перезаписываются окончательными
+    #                         значениями, история в CSV сохраняется (часть 2);
+    #   append_env=True     — к TICKER добавить обычное окружение (PATH и другое),
+    #                         иначе задача не найдёт команду docker;
+    #   max_active_tis_per_dag=3 — не больше трёх загрузок одновременно, чтобы
+    #                         не перегружать ни Mac, ни сервер биржи.
+    fetch_candles = BashOperator.partial(
+        task_id="fetch_candles",
+        cwd=PROJECT_DIR,
+        bash_command=(
+            '[ "{{ params.fetch }}" = "True" ] || exit 99; '
+            "docker compose run --rm -e TICKER=$TICKER "
+            "-e FROM_DATE={{ (dag_run.run_after - macros.timedelta(days=7)) | ds }} "
+            "loader"
+        ),
+        skip_on_exit_code=99,
+        append_env=True,
+        max_active_tis_per_dag=3,
+    ).expand(env=[{"TICKER": ticker} for ticker in TICKERS])
+
+    # Пакетный прогноз чемпионом — в CSV и в таблицу forecasts (этап 3).
+    # trigger_rule="none_failed" — запускать, если ни одна загрузка не упала;
+    # пропущенные (fetch = false) не мешают. По умолчанию нужен успех всех.
+    predict = BashOperator(
+        task_id="predict",
+        cwd=PROJECT_DIR,
+        bash_command="docker compose run --rm predictor",
+        trigger_rule="none_failed",
+    )
+
+    # Проверка результата: за последний час записан прогноз для всех 21 тикера.
+    #   exec -T     — выполнить команду в работающем контейнере db без терминала:
+    #                 у задачи Airflow терминала нет;
+    #   -tAc        — psql печатает только число (этап 1, часть 5);
+    #   [ ... -ge ] — «не меньше»: если тикеров меньше, команда вернёт 1, и задача
+    #                 упадёт — сбой будет виден в Airflow, а не останется незамеченным.
+    check_forecasts = BashOperator(
+        task_id="check_forecasts",
+        cwd=PROJECT_DIR,
+        bash_command=(
+            "n=$(docker compose exec -T db psql -U moex -d moex -tAc "
+            '"SELECT count(DISTINCT ticker) FROM forecasts '
+            "WHERE created_at > now() - interval '1 hour'\"); "
+            'echo "tickers with fresh forecasts: $n"; '
+            f'[ "$n" -ge {len(TICKERS)} ]'
+        ),
+    )
+
+    fetch_candles >> predict >> check_forecasts
+
+
+moex_vol_daily()
