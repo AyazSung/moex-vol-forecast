@@ -10,6 +10,11 @@
 #   docker compose run --rm trainer promote-model — сделать кандидата чемпионом,
 #                                              если он лучше
 #
+# Образ проекта собирает CI (GitHub Actions, этап 5) и публикует в реестре
+# ghcr.io/ayazsung/moex-vol; здесь он не собирается, а скачивается. Выкатка
+# новой версии: поменять тег у сервисов ниже на новый, затем
+#   docker compose pull mlflow api && docker compose up -d mlflow api
+#
 # Внутри compose все сервисы находятся в общей сети и находят друг друга по имени
 # сервиса: к базе обращаются по адресу db:5432, к MLflow — mlflow:5000.
 # Отступы в YAML важны: они показывают вложенность, как в Python.
@@ -49,8 +54,7 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: moex-vol:0.6.1
-    build: .
+    image: ghcr.io/ayazsung/moex-vol:0.6.1
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
@@ -97,8 +101,7 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: moex-vol:0.6.1
-    build: .
+    image: ghcr.io/ayazsung/moex-vol:0.6.1
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
     # Адрес базы: хост db — это имя сервиса выше, а не localhost.
@@ -120,8 +123,7 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: moex-vol:0.6.1
-    build: .
+    image: ghcr.io/ayazsung/moex-vol:0.6.1
     command: ["predict-vol"]
     # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow.
     # TZ — «сегодня» по Москве. В UTC ночной запуск в 00:15 МСК попал бы ещё во
@@ -142,8 +144,7 @@ services:
 
   # ---------- обучение и выбор чемпиона (разовые задачи) ----------
   trainer:
-    image: moex-vol:0.6.1
-    build: .
+    image: ghcr.io/ayazsung/moex-vol:0.6.1
     # Команда по умолчанию — обучение. Другую команду пишут при запуске, и она
     # заменяет эту целиком: docker compose run --rm trainer promote-model
     command: ["train-model"]
@@ -167,8 +168,7 @@ services:
 
   # ---------- API на FastAPI ----------
   api:
-    image: moex-vol:0.6.1
-    build: .
+    image: ghcr.io/ayazsung/moex-vol:0.6.1
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped

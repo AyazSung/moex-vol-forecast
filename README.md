@@ -28,6 +28,19 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks e
 
 When the checks pass, the `image` job builds the Docker image for `linux/amd64` and `linux/arm64`. Builds from `main` are pushed to GitHub Container Registry as `ghcr.io/ayazsung/moex-vol` with the tags `main` (the latest `main`) and `sha-<commit>`; pull requests only build the image.
 
+## Releases
+
+1. Bump the version (`uv version --bump patch` or `minor`) and the image tag in `compose.yaml` in a pull request, merge it.
+2. Tag the merge commit and push the tag:
+
+   ```bash
+   git tag -a v0.6.2 -m "Release 0.6.2"
+   git push origin v0.6.2
+   ```
+
+   CI checks that the tag matches `pyproject.toml`, publishes `ghcr.io/ayazsung/moex-vol:0.6.2` (also `0.6` and `latest`) and creates a GitHub Release with the merged pull requests.
+3. Deploy: `docker compose pull mlflow api && docker compose up -d mlflow api`, then check that `curl http://localhost:8000/openapi.json` reports the new version.
+
 ## Development
 
 `main` is protected: every change goes through a pull request, which can be merged only when the `checks` and `image` CI jobs pass.
@@ -51,12 +64,13 @@ Settings come from environment variables: `TICKER` (default `SBER`), `FROM_DATE`
 
 ## Docker
 
-One image, `moex-vol:<version>` (the version from `pyproject.toml`), runs every job and service described in `compose.yaml`. The services listen on localhost only.
+One image, `ghcr.io/ayazsung/moex-vol:<version>`, runs every job and service described in `compose.yaml`. CI builds it for `linux/amd64` and `linux/arm64` and publishes it to GitHub Container Registry; `compose.yaml` pulls it instead of building it. The services listen on localhost only.
 
 ```bash
-docker compose build                                        # build the image
-docker compose run --rm loader                              # one-off job: fetch candles (settings from .env)
-docker build --platform linux/amd64,linux/arm64 -t moex-vol:0.6.1 .   # also for typical servers (amd64)
+docker compose pull mlflow api              # download the image version set in compose.yaml
+docker compose up -d db mlflow api          # start or update the long-running services
+docker compose run --rm loader              # one-off job: fetch candles (settings from .env)
+docker build -t moex-vol:dev .              # build locally to try a Dockerfile change
 ```
 
 ## Database (docker compose)

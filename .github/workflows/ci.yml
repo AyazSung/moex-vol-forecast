@@ -7,6 +7,8 @@
 # Если проверки прошли, вторая работа собирает Docker-образ проекта для двух
 # процессоров (amd64 и arm64). Из main образ публикуется в GitHub Container
 # Registry: ghcr.io/ayazsung/moex-vol. В pull request — только сборка, без публикации.
+# Тег релиза (git tag v0.6.1) — выпуск версии: образ с тегами 0.6.1, 0.6 и latest
+# и страница релиза на GitHub со списком изменений.
 # Результат виден у коммита на GitHub: зелёная галочка или красный крестик.
 
 # Имя workflow на вкладке Actions и в значке README.
@@ -14,11 +16,13 @@ name: CI
 
 # Когда запускать:
 #   push в main       — проверить то, что уже попало в основную ветку;
+#   push тега v*      — выпуск версии: git tag v0.6.1 и git push origin v0.6.1 (часть 4);
 #   pull_request      — проверить изменения до того, как их вольют в main (часть 3);
 #   workflow_dispatch — кнопка «Run workflow» на вкладке Actions: запуск вручную.
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -82,6 +86,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      # Только для тега релиза: тег должен совпадать с версией в pyproject.toml,
+      # v0.6.1 — 0.6.1. Иначе образ получил бы тег 0.6.1, а внутри была бы другая
+      # версия. ::error:: — сообщение, которое GitHub покажет на странице запуска.
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(uv version --short)"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version in pyproject.toml"
+            exit 1
+          fi
+
       - name: Lint
         run: uv run ruff check
 
@@ -129,6 +145,8 @@ jobs:
       # Теги и метки образа по событию:
       #   type=ref,event=branch — из main: тег main (всегда последний образ main);
       #   type=ref,event=pr     — из pull request №7: тег pr-7;
+      #   type=semver           — из тега релиза v0.6.1: теги 0.6.1 и 0.6, а ещё
+      #                           latest (metadata-action добавляет его к релизам сам);
       #   type=sha              — тег по коммиту: sha-e466154, его не перезапишут.
       # Метки (labels) — сведения внутри образа: ссылка на репозиторий, коммит,
       # время сборки. По ссылке на репозиторий GitHub связывает образ с проектом.
@@ -140,6 +158,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha
 
       # Сборка по Dockerfile проекта для двух процессоров; из main — публикация.
@@ -155,3 +175,29 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Третья работа — страница релиза на GitHub. Только для тега релиза и только
+  # после того, как образ версии опубликован.
+  release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # contents: write — право создавать релизы. Только этой работе.
+    permissions:
+      contents: write
+
+    steps:
+      # gh — программа GitHub для терминала, на машинах GitHub она уже стоит.
+      #   --generate-notes — список изменений GitHub составит сам: pull request-ы,
+      #                      влитые с прошлого релиза;
+      #   --verify-tag     — не создавать релиз, если такого тега нет на GitHub.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --repo "$GITHUB_REPOSITORY"
+          --title "$GITHUB_REF_NAME"
+          --generate-notes
+          --verify-tag
