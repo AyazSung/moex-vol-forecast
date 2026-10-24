@@ -103,9 +103,18 @@ def build_dataset(raw_dir: Path, today: date) -> pd.DataFrame:
     return dataset
 
 
+def build_features(raw_dir: Path, today: date) -> pd.DataFrame:
+    """Feature rows of all finished days, the last day included."""
+    df = add_features(clean_candles(load_candles(raw_dir), today))
+    # Первые 22 дня каждого тикера дают пропуски в признаках: не хватает истории
+    # для окон, такие строки убираем. Цель здесь не нужна, поэтому последний день
+    # тикера остаётся — по его признакам строится прогноз на завтра. Нужна
+    # прогнозу (build_latest ниже) и проверке дрейфа (drift.py, этап 6).
+    return df.dropna(subset=FEATURES).reset_index(drop=True)
+
+
 def build_latest(raw_dir: Path, today: date) -> pd.DataFrame:
     """For prediction: the last finished day of every ticker (target unknown)."""
-    df = add_features(clean_candles(load_candles(raw_dir), today))
-    df = df.dropna(subset=FEATURES)
+    df = build_features(raw_dir, today)
     # tail(1) в каждой группе — последняя строка тикера, то есть самый свежий день.
     return df.groupby("ticker").tail(1).reset_index(drop=True)

@@ -1,13 +1,16 @@
-"""Daily pipeline: fetch candles of 21 tickers, forecast, check forecast quality."""
+"""Daily pipeline: fetch candles, forecast, check forecast quality and input drift."""
 
 # Ежедневный конвейер проекта:
 #
 #   fetch_candles ×21 → predict → check_forecasts → evaluate_forecasts
+#                     ↘ check_drift
 #
 # Каждая задача — команда docker compose в папке проекта. Airflow решает, что и
 # когда запускать, а работу делают те же контейнеры, что мы запускали руками на
-# этапе 3: loader (загрузка свечей) и predictor (пакетный прогноз). Последняя
-# задача (этап 6) сверяет прошлые прогнозы с тем, что случилось на самом деле.
+# этапе 3: loader (загрузка свечей) и predictor (пакетный прогноз). Две задачи
+# этапа 6 — проверки: evaluate_forecasts сверяет прошлые прогнозы с тем, что
+# случилось на самом деле, а check_drift — похожи ли свежие признаки на данные,
+# на которых модель училась.
 
 from datetime import timedelta
 from pathlib import Path
@@ -124,7 +127,25 @@ def moex_vol_daily():
         retries=0,
     )
 
+    # Проверка входных данных (этап 6, часть 2): не ушли ли признаки чемпиона от
+    # данных его обучения — PSI за 20 дней и значения за границами обучения.
+    # Идёт сразу после загрузки, параллельно с прогнозом, и прогноз не
+    # останавливает: в необычный день прогноз как раз нужен, а красная задача —
+    # повод посмотреть на данные. Подробно — в drift.py.
+    #   trigger_rule="none_failed" — как у predict: загрузки могли быть
+    #                  пропущены параметром fetch = false;
+    #   retries=0    — как у проверки качества: те же данные дадут тот же ответ.
+    check_drift = BashOperator(
+        task_id="check_drift",
+        cwd=PROJECT_DIR,
+        bash_command="docker compose run --rm predictor check-drift",
+        trigger_rule="none_failed",
+        retries=0,
+    )
+
+    # Две ветки после загрузки: прогноз с проверками выхода и проверка входа.
     fetch_candles >> predict >> check_forecasts >> evaluate_forecasts
+    fetch_candles >> check_drift
 
 
 moex_vol_daily()

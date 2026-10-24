@@ -114,7 +114,7 @@ Airflow 3 runs on the Mac in its own environment (`~/airflow/.venv`). The DAGs l
 
 | DAG | Schedule (Moscow time) | Steps |
 |---|---|---|
-| `moex_vol_daily` | 00:15, Tue–Sat | fetch the last week of candles for 21 tickers (3 at a time, 2 retries) → batch forecast → check that all 21 tickers got a fresh forecast → compare past forecasts with what happened (fails if the serving model is worse than naive over 20 days) |
+| `moex_vol_daily` | 00:15, Tue–Sat | fetch the last week of candles for 21 tickers (3 at a time, 2 retries) → batch forecast → check that all 21 tickers got a fresh forecast → compare past forecasts with what happened (fails if the serving model is worse than naive over 20 days); in parallel with the forecast, check the champion's input features for drift (fails on drift above the historical limit or on values outside the training range) |
 | `moex_vol_retrain` | 02:00, Sat | train a candidate on all data except the last 13 weeks → compare it with the champion on those 13 weeks → move the `champion` alias if the candidate is at least 1% better → restart the API if it serves an old version → check the API → backfill the new champion's forecasts over those 13 weeks |
 
 The champion/challenger step by hand:
@@ -138,3 +138,11 @@ docker compose exec db psql -U moex -d moex -c "SELECT * FROM forecast_quality O
 ```
 
 The threshold of 1.0 was chosen on history. For the HAR model trained on data before 2024 (version 1), the 20-day `rmse_to_naive` from January 2024 to October 2026 stayed between 0.64 and 1.01 and was above 1.0 on one day, 13 February 2025. The one-day metric is above 1 on about every sixth day, so it is not used for alerts.
+
+**Input drift.** `check-drift` compares the champion's input features with its training data. For every feature it computes the PSI (population stability index) of the last 20 trading days against the training distribution and counts tickers whose value is outside the training range. The PSI limit is not the textbook 0.25: twenty consecutive days share one market regime, so even inside the training period a 20-day window of a volatility feature usually has a PSI above 1. The limit is the 99th percentile of the PSI of all 20-day windows of the training period. Results go to the `feature_drift` table, one row per day, model version and feature.
+
+```bash
+docker compose run --rm predictor check-drift                                         # exit code 1 on drift above the limit or values outside the training range
+docker compose run --rm predictor check-drift --model-version 2 --as-of 2024-07-16    # a past day for any version: VTBR volume after its reverse split
+docker compose exec db psql -U moex -d moex -c "SELECT * FROM feature_drift ORDER BY as_of DESC, feature LIMIT 6"
+```
