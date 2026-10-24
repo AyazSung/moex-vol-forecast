@@ -8,12 +8,14 @@
 #   GET  /health             — сервис жив;
 #   GET  /model              — какая версия модели загружена;
 #   POST /predict            — прогноз по признакам из запроса (онлайн-прогноз);
-#   GET  /forecasts/{ticker} — последний прогноз тикера из базы (пакетный прогноз).
+#   GET  /forecasts/{ticker} — последний прогноз тикера из базы (пакетный прогноз);
+#   GET  /metrics            — метрики сервиса для Prometheus (этап 6).
 #
 # Модель-чемпион загружается один раз при старте сервиса. Если в реестре
 # перевесили псевдоним champion, сервис нужно перезапустить.
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from importlib.metadata import version as package_version
@@ -21,10 +23,18 @@ from pathlib import Path
 
 import pandas as pd
 import psycopg
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Histogram,
+    Info,
+    generate_latest,
+)
 from pydantic import BaseModel, Field
+from starlette.routing import Match
 
 from moex_vol_forecast.config import load_settings
 from moex_vol_forecast.db import latest_forecast
@@ -86,6 +96,43 @@ class StoredForecast(BaseModel):
     created_at: datetime
 
 
+# ---------- метрики для Prometheus (этап 6) ----------
+# Prometheus — система сбора метрик. Каждые 15 секунд он заходит на адрес
+# /metrics сервиса, забирает текущие значения и хранит их историю, а Grafana
+# рисует по этой истории графики. Сам сервис хранит только текущие числа.
+#
+# Виды метрик:
+#   Counter   — счётчик, который только растёт: сколько запросов пришло с
+#               момента запуска. «Запросов в секунду» Prometheus считает сам —
+#               по тому, как быстро растёт счётчик;
+#   Histogram — раскладывает значения по корзинам: сколько запросов ответили
+#               быстрее 5 мс, быстрее 10 мс и так далее. По корзинам Prometheus
+#               считает, например, время, быстрее которого ответили 95% запросов;
+#   Info      — постоянные сведения о сервисе: здесь — какая модель загружена.
+#
+# Метки (labels) — разрезы метрики: метод, адрес, код ответа. Адрес берём
+# шаблоном (/forecasts/{ticker}), а не настоящим путём: иначе на каждый тикер
+# появлялась бы своя строка метрики, и их число росло бы без предела.
+REQUESTS = Counter(
+    "api_requests_total",
+    "HTTP requests by method, path template and status code",
+    ["method", "path", "status"],
+)
+LATENCY = Histogram(
+    "api_request_duration_seconds",
+    "Time to answer an HTTP request, seconds",
+    ["method", "path"],
+)
+MODEL = Info("api_model", "Model the API serves")
+# Онлайн-прогнозы (POST /predict): какие значения отдаёт модель. Корзины — в
+# единицах волатильности: в обычный день она около 0.01–0.02.
+FORECASTS = Histogram(
+    "api_forecast_pk",
+    "Online forecasts of next-day volatility",
+    buckets=[0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.1],
+)
+
+
 # ---------- запуск сервиса ----------
 # lifespan — код вокруг жизни сервиса: что до yield, выполняется один раз при
 # старте (до первого запроса), что после — при остановке. Модель грузим здесь,
@@ -97,6 +144,9 @@ async def lifespan(app: FastAPI):
     # app.state — «карман» приложения: положенное сюда видно во всех запросах.
     app.state.champion = load_champion()
     logger.info("loaded %s version %s", MODEL_NAME, app.state.champion.version)
+    # Метрика api_model_info{name="moex-vol",version="6"} 1 — на дашборде видно,
+    # какая версия сейчас в API и когда она сменилась.
+    MODEL.info({"name": MODEL_NAME, "version": app.state.champion.version})
     yield
 
 
@@ -113,6 +163,47 @@ app = FastAPI(
 )
 # Раздавать файлы из папки static по адресам /static/<имя файла>.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def path_template(request: Request) -> str:
+    """Path template of the route that handles the request, e.g. /forecasts/{ticker}."""
+    # Каждый адрес приложения умеет ответить, подходит ли ему запрос:
+    #   FULL    — подходят и путь, и метод;
+    #   PARTIAL — путь подходит, а метод нет (ответ будет 405);
+    #   NONE    — не подходит.
+    # Выбираем так же, как сам FastAPI: первый FULL, а если его нет — первый
+    # PARTIAL. route.path — шаблон адреса: /forecasts/{ticker}, /openapi.json,
+    # /static для всех файлов страницы документации.
+    # FastAPI и сам отмечает в запросе, какой адрес его обработал, но только для
+    # адресов, объявленных через @app.get и подобные. Служебный /openapi.json и
+    # файлы /static он не отмечает, поэтому ищем сами.
+    partial = None
+    for route in request.app.routes:
+        match, _ = route.matches(request.scope)
+        if match == Match.FULL:
+            return route.path
+        if match == Match.PARTIAL and partial is None:
+            partial = route.path
+    # Несуществующие адреса (ответ 404) — под одной меткой unmatched: иначе
+    # каждый случайный путь давал бы новую строку метрики.
+    return partial or "unmatched"
+
+
+# Middleware — код, через который проходит каждый запрос до функции адреса и
+# каждый ответ после неё. Здесь он засекает время и считает запросы.
+@app.middleware("http")
+async def measure_requests(request: Request, call_next):
+    """Count every request and measure how long the answer took."""
+    path = path_template(request)
+    # Обращения самого Prometheus к /metrics не считаем: это служебный трафик.
+    if path == "/metrics":
+        return await call_next(request)
+    start = time.perf_counter()
+    # call_next — передать запрос дальше, адресу, и дождаться ответа.
+    response = await call_next(request)
+    LATENCY.labels(request.method, path).observe(time.perf_counter() - start)
+    REQUESTS.labels(request.method, path, str(response.status_code)).inc()
+    return response
 
 
 # include_in_schema=False — сама страница документации в документацию не попадает.
@@ -155,6 +246,8 @@ def predict(features: Features) -> Prediction:
     # Одна строка таблицы из полей запроса; модель берёт из неё свои столбцы.
     row = pd.DataFrame([features.model_dump()])
     value = float(champion.predict(row)[0])
+    # Прогноз — ещё и в метрику: на дашборде видно, какие значения отдаёт модель.
+    FORECASTS.observe(value)
     return Prediction(forecast_pk=value, model_version=champion.version)
 
 
@@ -177,3 +270,12 @@ def get_forecast(ticker: str) -> StoredForecast:
         # 404 — «не найдено».
         raise HTTPException(status_code=404, detail=f"no forecast for {ticker.upper()}")
     return StoredForecast(**row)
+
+
+# include_in_schema=False — служебный адрес, в документацию API не попадает.
+@app.get("/metrics", include_in_schema=False)
+def metrics() -> Response:
+    """Current metric values in the Prometheus text format."""
+    # generate_latest() — все метрики текстом, по строке на значение, например:
+    #   api_requests_total{method="GET",path="/health",status="200"} 3.0
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

@@ -1,6 +1,8 @@
 # compose.yaml — описание нескольких контейнеров, которые работают вместе.
 # Постоянно работающие сервисы (база, сервер MLflow, API):
 #   docker compose up -d db mlflow api
+# Мониторинг (этап 6): Prometheus собирает метрики API, Grafana рисует дашборды:
+#   docker compose up -d prometheus grafana
 # Разовые задачи (профиль jobs):
 #   docker compose run --rm loader             — загрузить свечи с биржи
 #   docker compose run --rm loader import-candles — загрузить CSV в базу
@@ -60,7 +62,7 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: ghcr.io/ayazsung/moex-vol:0.8.0
+    image: ghcr.io/ayazsung/moex-vol:0.9.0
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
@@ -107,7 +109,7 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: ghcr.io/ayazsung/moex-vol:0.8.0
+    image: ghcr.io/ayazsung/moex-vol:0.9.0
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
     # Адрес базы: хост db — это имя сервиса выше, а не localhost.
@@ -129,7 +131,7 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: ghcr.io/ayazsung/moex-vol:0.8.0
+    image: ghcr.io/ayazsung/moex-vol:0.9.0
     command: ["predict-vol"]
     # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow. Этот же
     # сервис запускает evaluate-forecasts, backfill-forecasts и check-drift
@@ -153,7 +155,7 @@ services:
 
   # ---------- обучение и выбор чемпиона (разовые задачи) ----------
   trainer:
-    image: ghcr.io/ayazsung/moex-vol:0.8.0
+    image: ghcr.io/ayazsung/moex-vol:0.9.0
     # Команда по умолчанию — обучение. Другую команду пишут при запуске, и она
     # заменяет эту целиком: docker compose run --rm trainer promote-model
     command: ["train-model"]
@@ -177,7 +179,7 @@ services:
 
   # ---------- API на FastAPI ----------
   api:
-    image: ghcr.io/ayazsung/moex-vol:0.8.0
+    image: ghcr.io/ayazsung/moex-vol:0.9.0
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
@@ -203,7 +205,70 @@ services:
       mlflow:
         condition: service_healthy
 
+  # ---------- Prometheus: сбор метрик сервиса (этап 6) ----------
+  prometheus:
+    # Официальный образ. Версия зафиксирована, как у postgres: обновление —
+    # отдельное решение, а не случайность.
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    # Команда — флаги программы prometheus:
+    #   --config.file                — файл настроек: кого и как часто опрашивать;
+    #   --storage.tsdb.path          — где хранить историю метрик: в томе;
+    #   --storage.tsdb.retention.time — сколько хранить: 90 дней, потом старое
+    #                                  удаляется само.
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      # Файл настроек из репозитория; :ro — контейнер может только читать.
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # История метрик — в томе: переживает пересоздание контейнера.
+      - prometheus_data:/prometheus
+    # Интерфейс Prometheus: http://localhost:9090 — только с этого Mac.
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - api
+
+  # ---------- Grafana: дашборды (этап 6) ----------
+  grafana:
+    image: grafana/grafana:13.2.3
+    restart: unless-stopped
+    # Настройки Grafana — переменные GF_<РАЗДЕЛ>_<КЛЮЧ>:
+    #   ANONYMOUS_ENABLED и ORG_ROLE — смотреть дашборды без входа, только
+    #     просмотр (Viewer). Порт открыт только для этого Mac, поэтому можно;
+    #   ADMIN_PASSWORD — пароль администратора admin, учебный, как у базы;
+    #   DEFAULT_HOME_DASHBOARD_PATH — какой дашборд открывать на главной;
+    #   ANALYTICS_* и NEWS_* — не отправлять статистику и не проверять
+    #     обновления и новости в интернете.
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: moex
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/model.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      # Источники данных и откуда брать дашборды — файлы из репозитория.
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Сами дашборды — файлы JSON из репозитория.
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Служебная база Grafana (пользователи, настройки) — в томе.
+      - grafana_data:/var/lib/grafana
+    # Интерфейс Grafana: http://localhost:3000 — только с этого Mac.
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+
 # Именованные тома: Docker сам хранит их данные; удаляются только явно (down -v).
 volumes:
   pgdata:
   mlartifacts:
+  prometheus_data:
+  grafana_data:

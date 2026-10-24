@@ -108,3 +108,66 @@ def test_docs_work_without_internet(client):
     assert "/static/swagger-ui-bundle.js" in page
     assert "cdn.jsdelivr.net" not in page
     assert client.get("/static/swagger-ui-bundle.js").status_code == 200
+
+
+# ---------- метрики для Prometheus (этап 6) ----------
+def metric_value(client, name):
+    """Value of one metric line from /metrics; 0 if there is no such line yet."""
+    # Строка метрики выглядит так: имя{метки} значение. Счётчики общие для всех
+    # тестов, поэтому тесты сравнивают значение «до» и «после», а не с нулём.
+    for line in client.get("/metrics").text.splitlines():
+        if line.startswith(name + " "):
+            return float(line.split()[-1])
+    return 0.0
+
+
+def test_metrics_count_requests_by_path_template(client):
+    name = 'api_requests_total{method="GET",path="/forecasts/{ticker}",status="503"}'
+    before = metric_value(client, name)
+
+    client.get("/forecasts/sber")
+    client.get("/forecasts/gazp")
+
+    # Два разных тикера — одна строка метрики: адрес записан шаблоном. Без базы
+    # ответ 503, и код ответа тоже попал в метки.
+    assert metric_value(client, name) == before + 2
+
+
+def test_metrics_label_service_and_unknown_paths(client):
+    openapi = 'api_requests_total{method="GET",path="/openapi.json",status="200"}'
+    unknown = 'api_requests_total{method="GET",path="unmatched",status="404"}'
+    openapi_before = metric_value(client, openapi)
+    unknown_before = metric_value(client, unknown)
+
+    client.get("/openapi.json")
+    client.get("/no-such-page")
+    client.get("/another-missing-page")
+
+    # Служебный адрес FastAPI записан своим шаблоном. Несуществующие адреса —
+    # под одной меткой unmatched: случайные пути не плодят новых строк метрики.
+    assert metric_value(client, openapi) == openapi_before + 1
+    assert metric_value(client, unknown) == unknown_before + 2
+
+
+def test_metrics_show_the_model_version(client):
+    text = client.get("/metrics").text
+
+    # Версия фальшивой модели из фикстуры — "7".
+    assert 'api_model_info{name="moex-vol",version="7"} 1.0' in text
+
+
+def test_metrics_requests_are_not_counted(client):
+    client.get("/metrics")
+    client.get("/metrics")
+
+    # Служебные обращения к /metrics в счётчик запросов не попадают.
+    assert 'path="/metrics"' not in client.get("/metrics").text
+
+
+def test_online_forecasts_are_recorded(client):
+    before = metric_value(client, "api_forecast_pk_count")
+
+    client.post("/predict", json=FEATURES)
+
+    # _count — сколько значений попало в гистограмму прогнозов.
+    assert metric_value(client, "api_forecast_pk_count") == before + 1
