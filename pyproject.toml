@@ -15,7 +15,7 @@
 # (или patch / major): она меняет версию и здесь, и в uv.lock.
 # Если поменять только здесь, сборка Docker-образа упадёт на `uv sync --locked`.
 name = "moex-vol-forecast"
-version = "0.7.0"
+version = "0.8.0"
 description = "Daily volatility forecast for MOEX stocks"
 readme = "README.md"
 authors = [
@@ -46,6 +46,7 @@ predict-vol = "moex_vol_forecast.predict:main"
 promote-model = "moex_vol_forecast.promote:main"
 evaluate-forecasts = "moex_vol_forecast.quality:main"
 backfill-forecasts = "moex_vol_forecast.backfill:main"
+check-drift = "moex_vol_forecast.drift:main"
 
 # Чем собирать пакет при установке (uv_build — сборщик от uv). Трогать не нужно.
 [build-system]

@@ -16,6 +16,7 @@ from moex_vol_forecast.db import (
     latest_forecast,
     load_forecasts,
     save_candles,
+    save_drift,
     save_forecasts,
     save_quality,
 )
@@ -159,3 +160,32 @@ def test_quality_upsert():
     finally:
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute("DELETE FROM forecast_quality WHERE model_version = 0")
+
+
+def test_drift_upsert():
+    # Запись итогов проверки дрейфа: повторная запись обновляет строки, а не
+    # добавляет дубли. Версия 0 — такой в реестре нет: настоящие строки не задеты.
+    table = pd.DataFrame(
+        {
+            "as_of": pd.to_datetime(["2026-10-01", "2026-10-01"]),
+            "feature": ["pk_1", "pk_22"],
+            "psi": [0.5, 1.2],
+            "psi_limit": [2.7, 7.0],
+            "outside": [0, 0],
+        }
+    )
+    query = (
+        "SELECT feature, psi, outside FROM feature_drift "
+        "WHERE model_version = 0 ORDER BY feature"
+    )
+    try:
+        save_drift(table, "0", DATABASE_URL)
+        # Второй раз — у pk_1 один тикер вышел за границы.
+        save_drift(table.assign(outside=[1, 0]), "0", DATABASE_URL)
+
+        with psycopg.connect(DATABASE_URL) as conn:
+            rows = conn.execute(query).fetchall()
+        assert rows == [("pk_1", 0.5, 1), ("pk_22", 1.2, 0)]
+    finally:
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute("DELETE FROM feature_drift WHERE model_version = 0")

@@ -1,6 +1,7 @@
-"""Save candles, forecasts and forecast quality to PostgreSQL."""
+"""Save candles, forecasts, forecast quality and input drift to PostgreSQL."""
 
-# Сохранение свечей, прогнозов и качества прогнозов в базу данных PostgreSQL.
+# Сохранение в базу данных PostgreSQL: свечи, прогнозы, качество прогнозов и
+# дрейф входных признаков.
 # Таблица candles: одна строка = одна дневная свеча одного тикера.
 # Запись идемпотентная: повторная загрузка тех же дней не создаёт дублей,
 # а обновляет строки («upsert» = update + insert).
@@ -287,4 +288,60 @@ def save_quality(days: pd.DataFrame, database_url: str) -> int:
         with conn.cursor() as cur:
             cur.executemany(UPSERT_QUALITY, rows)
     logger.info("upserted %d rows into forecast_quality", len(rows))
+    return len(rows)
+
+
+# ---------- дрейф входных признаков (этап 6) ----------
+# Таблица feature_drift — итог проверки дрейфа (drift.py). Одна строка — один
+# признак одной версии модели в один день:
+#   psi       — PSI признака за 20 торговых дней до этого дня включительно
+#               против данных обучения версии: чем больше, тем сильнее отличие;
+#   psi_limit — порог для этого признака и версии: 99-й перцентиль PSI месячных
+#               окон периода обучения. psi выше порога — тревога;
+#   outside   — у скольких тикеров значение признака в этот день вне границ
+#               обучения (меньше минимума или больше максимума). Больше 0 — тревога.
+# Пример строки: день 2026-10-23, версия 6, pk_22, psi 0.94, psi_limit 7.03,
+# outside 0.
+CREATE_DRIFT = """
+CREATE TABLE IF NOT EXISTS feature_drift (
+    as_of         date             NOT NULL,
+    model_version integer          NOT NULL,
+    feature       text             NOT NULL,
+    psi           double precision NOT NULL,
+    psi_limit     double precision NOT NULL,
+    outside       integer          NOT NULL,
+    PRIMARY KEY (as_of, model_version, feature)
+)
+"""
+
+UPSERT_DRIFT = """
+INSERT INTO feature_drift (as_of, model_version, feature, psi, psi_limit, outside)
+VALUES (%s, %s, %s, %s, %s, %s)
+ON CONFLICT (as_of, model_version, feature) DO UPDATE SET
+    psi = EXCLUDED.psi,
+    psi_limit = EXCLUDED.psi_limit,
+    outside = EXCLUDED.outside
+"""
+
+
+def save_drift(table: pd.DataFrame, model_version: str, database_url: str) -> int:
+    """Upsert input drift of a model version (one row per day and feature)."""
+    # Как save_quality: числа pandas переводим в обычные числа Python. Команда
+    # каждый раз пересчитывает всю историю версии, а upsert обновляет строки.
+    rows = [
+        (day.date(), int(model_version), feature, float(value), float(limit), int(n))
+        for day, feature, value, limit, n in zip(
+            table["as_of"],
+            table["feature"],
+            table["psi"],
+            table["psi_limit"],
+            table["outside"],
+            strict=True,
+        )
+    ]
+    with psycopg.connect(database_url) as conn:
+        conn.execute(CREATE_DRIFT)
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_DRIFT, rows)
+    logger.info("upserted %d rows into feature_drift", len(rows))
     return len(rows)
