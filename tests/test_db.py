@@ -6,11 +6,19 @@
 
 import os
 
+import numpy as np
 import pandas as pd
 import psycopg
 import pytest
 
-from moex_vol_forecast.db import latest_forecast, save_candles, save_forecasts
+from moex_vol_forecast.db import (
+    add_missing_forecasts,
+    latest_forecast,
+    load_forecasts,
+    save_candles,
+    save_forecasts,
+    save_quality,
+)
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -87,3 +95,67 @@ def test_forecasts_upsert_and_latest():
     finally:
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute("DELETE FROM forecasts WHERE ticker = %s", (TICKER,))
+
+
+def test_backfill_keeps_stored_forecasts():
+    # Дозаполнение (backfill-forecasts) дописывает недостающие прогнозы и не
+    # трогает уже записанные.
+    try:
+        # Ежедневный DAG записал прогнозы версии 1 на два дня, по 0.01.
+        save_forecasts(make_forecasts(0.01), "1", DATABASE_URL)
+        # Дозаполнение приносит те же два дня, но с другим значением (0.05), и
+        # ещё один день, которого в таблице нет.
+        new_day = pd.DataFrame(
+            {
+                "ticker": [TICKER],
+                "date": pd.to_datetime(["2026-10-05"]),
+                "forecast_pk": [0.05],
+            }
+        )
+        more = pd.concat([make_forecasts(0.05), new_day])
+
+        added = add_missing_forecasts(more, "1", DATABASE_URL)
+
+        # Добавился только новый день. Два прогноза, записанные раньше, остались
+        # 0.01: то, что модель выдала вживую, дозаполнение не переписывает.
+        assert added == 1
+        stored = load_forecasts(DATABASE_URL)
+        mine = stored[stored["ticker"] == TICKER].sort_values("as_of")
+        assert mine["forecast_pk"].tolist() == [0.01, 0.01, 0.05]
+    finally:
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute("DELETE FROM forecasts WHERE ticker = %s", (TICKER,))
+
+
+def test_quality_upsert():
+    # Запись итогов проверки качества: повторная запись обновляет строки, а не
+    # добавляет дубли, и пустое окно (NaN) хранится как NULL.
+    # Версия 0 — такой в реестре нет (нумерация с 1): тест не заденет настоящие
+    # строки таблицы.
+    days = pd.DataFrame(
+        {
+            "as_of": pd.to_datetime(["2026-10-01", "2026-10-02"]),
+            "model_version": [0, 0],
+            "tickers": [21, 21],
+            "rmse": [0.004, 0.005],
+            "naive_rmse": [0.005, 0.005],
+            "rmse_to_naive": [0.8, 1.0],
+            "rmse_to_naive_20d": [np.nan, 0.9],
+        }
+    )
+    query = (
+        "SELECT tickers, rmse_to_naive_20d FROM forecast_quality "
+        "WHERE model_version = 0 ORDER BY as_of"
+    )
+    try:
+        save_quality(days, DATABASE_URL)
+        # Второй раз, с другим числом тикеров: строки обновляются, дублей нет.
+        save_quality(days.assign(tickers=20), DATABASE_URL)
+
+        with psycopg.connect(DATABASE_URL) as conn:
+            rows = conn.execute(query).fetchall()
+        # Пустое значение pandas (NaN) легло в базу как NULL — в Python это None.
+        assert rows == [(20, None), (20, 0.9)]
+    finally:
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute("DELETE FROM forecast_quality WHERE model_version = 0")

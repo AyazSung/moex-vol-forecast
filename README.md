@@ -19,8 +19,8 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 - [x] Stage 2: MLflow tracking and model registry
 - [x] Stage 3: batch scoring + FastAPI service
 - [x] Stage 4: Airflow orchestration
-- [ ] Stage 5: CI/CD
-- [ ] Stage 6: monitoring (drift, Grafana)
+- [x] Stage 5: CI/CD
+- [ ] Stage 6: monitoring (forecast quality, drift, Grafana)
 
 ## CI
 
@@ -114,8 +114,8 @@ Airflow 3 runs on the Mac in its own environment (`~/airflow/.venv`). The DAGs l
 
 | DAG | Schedule (Moscow time) | Steps |
 |---|---|---|
-| `moex_vol_daily` | 00:15, Tue–Sat | fetch the last week of candles for 21 tickers (3 at a time, 2 retries) → batch forecast → check that all 21 tickers got a fresh forecast |
-| `moex_vol_retrain` | 02:00, Sat | train a candidate on all data except the last 13 weeks → compare it with the champion on those 13 weeks → move the `champion` alias if the candidate is at least 1% better → restart the API if it serves an old version → check the API |
+| `moex_vol_daily` | 00:15, Tue–Sat | fetch the last week of candles for 21 tickers (3 at a time, 2 retries) → batch forecast → check that all 21 tickers got a fresh forecast → compare past forecasts with what happened (fails if the serving model is worse than naive over 20 days) |
+| `moex_vol_retrain` | 02:00, Sat | train a candidate on all data except the last 13 weeks → compare it with the champion on those 13 weeks → move the `champion` alias if the candidate is at least 1% better → restart the API if it serves an old version → check the API → backfill the new champion's forecasts over those 13 weeks |
 
 The champion/challenger step by hand:
 
@@ -125,3 +125,16 @@ docker compose run --rm trainer promote-model        # --min-improvement 0.01 by
 ```
 
 Every candidate version gets tags in the MLflow registry: the comparison window, both metrics and the decision (`promoted` or `rejected`).
+
+## Monitoring
+
+A forecast made on day `as_of` can be checked once the next trading day has closed. `evaluate-forecasts` compares every stored forecast with the actual volatility of that day and with the naive forecast "tomorrow as today", using the training metric `rmse_to_naive` (below 1 means better than naive). The results go to the `forecast_quality` table, one row per day and model version; `rmse_to_naive_20d` is the metric over the last 20 days of the version.
+
+```bash
+docker compose run --rm predictor evaluate-forecasts                    # exit code 1 if the serving version's 20-day rmse_to_naive is above 1.0
+docker compose run --rm predictor backfill-forecasts                    # add the champion's forecasts over its test period
+docker compose run --rm predictor backfill-forecasts --model-version 1  # the same for any version
+docker compose exec db psql -U moex -d moex -c "SELECT * FROM forecast_quality ORDER BY as_of DESC LIMIT 5"
+```
+
+The threshold of 1.0 was chosen on history. For the HAR model trained on data before 2024 (version 1), the 20-day `rmse_to_naive` from January 2024 to October 2026 stayed between 0.64 and 1.01 and was above 1.0 on one day, 13 February 2025. The one-day metric is above 1 on about every sixth day, so it is not used for alerts.

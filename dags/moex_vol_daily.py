@@ -1,12 +1,13 @@
-"""Daily pipeline: fetch candles of 21 tickers, forecast, check the result."""
+"""Daily pipeline: fetch candles of 21 tickers, forecast, check forecast quality."""
 
 # Ежедневный конвейер проекта:
 #
-#   fetch_candles ×21 → predict → check_forecasts
+#   fetch_candles ×21 → predict → check_forecasts → evaluate_forecasts
 #
 # Каждая задача — команда docker compose в папке проекта. Airflow решает, что и
 # когда запускать, а работу делают те же контейнеры, что мы запускали руками на
-# этапе 3: loader (загрузка свечей) и predictor (пакетный прогноз).
+# этапе 3: loader (загрузка свечей) и predictor (пакетный прогноз). Последняя
+# задача (этап 6) сверяет прошлые прогнозы с тем, что случилось на самом деле.
 
 from datetime import timedelta
 from pathlib import Path
@@ -107,7 +108,23 @@ def moex_vol_daily():
         ),
     )
 
-    fetch_candles >> predict >> check_forecasts
+    # Проверка качества (этап 6). Только что загрузились свечи последнего дня, а
+    # это факт для прогноза, сделанного прошлой ночью. Команда сверяет все
+    # прогнозы, для которых факт уже известен, записывает итог в таблицу
+    # forecast_quality и проверяет версию модели, которая сейчас в работе. Если
+    # за 20 последних дней её прогнозы хуже наивного «завтра как сегодня»,
+    # команда вернёт код 1, и задача станет красной (failed).
+    # retries=0 — без повторных попыток. Повторы из default_args выше помогают,
+    # когда сеть или Docker ненадолго не ответили. Плохое качество повтор не
+    # исправит: те же данные дадут то же число, поэтому задача падает сразу.
+    evaluate_forecasts = BashOperator(
+        task_id="evaluate_forecasts",
+        cwd=PROJECT_DIR,
+        bash_command="docker compose run --rm predictor evaluate-forecasts",
+        retries=0,
+    )
+
+    fetch_candles >> predict >> check_forecasts >> evaluate_forecasts
 
 
 moex_vol_daily()

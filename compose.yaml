@@ -9,6 +9,10 @@
 #                                              — обучить модель-кандидата
 #   docker compose run --rm trainer promote-model — сделать кандидата чемпионом,
 #                                              если он лучше
+#   docker compose run --rm predictor evaluate-forecasts — сверить прошлые
+#                                              прогнозы с фактом (этап 6)
+#   docker compose run --rm predictor backfill-forecasts — дописать прогнозы
+#                                              чемпиона за его тестовый период
 #
 # Образ проекта собирает CI (GitHub Actions, этап 5) и публикует в реестре
 # ghcr.io/ayazsung/moex-vol; здесь он не собирается, а скачивается. Выкатка
@@ -54,7 +58,7 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: ghcr.io/ayazsung/moex-vol:0.6.1
+    image: ghcr.io/ayazsung/moex-vol:0.7.0
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
@@ -101,7 +105,7 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: ghcr.io/ayazsung/moex-vol:0.6.1
+    image: ghcr.io/ayazsung/moex-vol:0.7.0
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
     # Адрес базы: хост db — это имя сервиса выше, а не localhost.
@@ -123,9 +127,11 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: ghcr.io/ayazsung/moex-vol:0.6.1
+    image: ghcr.io/ayazsung/moex-vol:0.7.0
     command: ["predict-vol"]
-    # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow.
+    # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow. Этот же
+    # сервис запускает evaluate-forecasts и backfill-forecasts (этап 6): им
+    # нужны те же база и свечи, а дозаполнению — ещё и модели из MLflow.
     # TZ — «сегодня» по Москве. В UTC ночной запуск в 00:15 МСК попал бы ещё во
     # вчерашний день, и код отбросил бы только что закрытую свечу как незакрытую.
     environment:
@@ -144,7 +150,7 @@ services:
 
   # ---------- обучение и выбор чемпиона (разовые задачи) ----------
   trainer:
-    image: ghcr.io/ayazsung/moex-vol:0.6.1
+    image: ghcr.io/ayazsung/moex-vol:0.7.0
     # Команда по умолчанию — обучение. Другую команду пишут при запуске, и она
     # заменяет эту целиком: docker compose run --rm trainer promote-model
     command: ["train-model"]
@@ -168,7 +174,7 @@ services:
 
   # ---------- API на FastAPI ----------
   api:
-    image: ghcr.io/ayazsung/moex-vol:0.6.1
+    image: ghcr.io/ayazsung/moex-vol:0.7.0
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
