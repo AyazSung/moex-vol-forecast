@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 15
 
     # Сервисный контейнер — PostgreSQL рядом с машиной проверок, как db в compose.
-    # Он нужен двум тестам из tests/test_db.py: без базы они пропускаются.
+    # Он нужен тестам из tests/test_db.py: без базы они пропускаются.
     services:
       postgres:
         image: postgres:18

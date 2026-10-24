@@ -3,10 +3,13 @@
 # Еженедельное переобучение модели:
 #
 #   train_candidate → promote → api_is_stale → restart_api → check_api
+#     → backfill_forecasts
 #
 # Кандидат учится на всех данных, кроме последних 13 недель, и сравнивается с
 # чемпионом на этих неделях (команда promote-model, часть 4). Если чемпион
 # сменился, API перезапускается: модель он загружает только при старте (этап 3).
+# В конце в таблицу forecasts дописываются прогнозы нового чемпиона за эти
+# 13 недель — чтобы проверка качества сразу могла о нём судить (этап 6).
 
 import json
 import time
@@ -125,7 +128,26 @@ def moex_vol_retrain():
             return
         raise RuntimeError("the API did not start in 60 seconds")
 
-    train_candidate >> promote >> api_is_stale() >> restart_api >> check_api()
+    # Дописать прогнозы нового чемпиона (этап 6). Проверке качества в ежедневном
+    # DAG нужны прогнозы версии за 20 дней, а у нового чемпиона их ещё нет.
+    # Команда backfill-forecasts считает его прогнозы на те 13 недель, на
+    # которых он не учился, — и проверка может судить о нём сразу, а не через
+    # месяц. Задача стоит после api_is_stale, поэтому, как и перезапуск API,
+    # выполняется только когда чемпион сменился; иначе её пропускают (skipped).
+    backfill_forecasts = BashOperator(
+        task_id="backfill_forecasts",
+        cwd=PROJECT_DIR,
+        bash_command="docker compose run --rm predictor backfill-forecasts",
+    )
+
+    (
+        train_candidate
+        >> promote
+        >> api_is_stale()
+        >> restart_api
+        >> check_api()
+        >> backfill_forecasts
+    )
 
 
 moex_vol_retrain()

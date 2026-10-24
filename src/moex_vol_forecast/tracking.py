@@ -64,3 +64,15 @@ def load_champion() -> Champion:
     # даже если псевдоним перевесят в ту же секунду.
     version = client.get_model_version_by_alias(MODEL_NAME, CHAMPION).version
     return load_version(version)
+
+
+def first_test_day(client: MlflowClient, version: str) -> str:
+    """Start of the test period of the run that trained the version."""
+    # Начало тестового периода train-model записывает в параметры запуска
+    # (train.py), например "2026-07-23": до этого дня модель училась, с него —
+    # проверялась. Версия в реестре помнит, каким запуском обучена (run_id),
+    # поэтому путь такой: версия -> её запуск -> параметр test_start.
+    # Функция нужна двум командам — выбору чемпиона (promote.py) и дозаполнению
+    # прогнозов (backfill.py), — поэтому живёт здесь, среди общих функций MLflow.
+    run_id = client.get_model_version(MODEL_NAME, version).run_id
+    return client.get_run(run_id).data.params["test_start"]

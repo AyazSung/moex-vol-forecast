@@ -36,6 +36,7 @@ from moex_vol_forecast.tracking import (
     CHAMPION,
     MODEL_NAME,
     Champion,
+    first_test_day,
     load_version,
     setup_tracking,
 )
@@ -71,14 +72,6 @@ def summary(promote: bool, candidate: str, champion: str | None) -> str:
     if champion is None:
         return f"promoted version {candidate}: the first champion"
     return f"promoted version {candidate}: new champion, was version {champion}"
-
-
-def first_test_day(client: MlflowClient, version: str) -> str:
-    """Start of the test period of the run that trained the version."""
-    # Обучение записывает test_start в параметры запуска (train.py), например
-    # "2026-07-23"; до этого дня модель училась, с него — проверялась.
-    run_id = client.get_model_version(MODEL_NAME, version).run_id
-    return client.get_run(run_id).data.params["test_start"]
 
 
 def decide(client: MlflowClient, raw_dir: Path, args: argparse.Namespace) -> None:
