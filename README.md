@@ -69,6 +69,7 @@ One image, `ghcr.io/ayazsung/moex-vol:<version>`, runs every job and service des
 ```bash
 docker compose pull mlflow api              # download the image version set in compose.yaml
 docker compose up -d db mlflow api          # start or update the long-running services
+docker compose up -d prometheus grafana     # monitoring: Prometheus and Grafana dashboards
 docker compose run --rm loader              # one-off job: fetch candles (settings from .env)
 docker build -t moex-vol:dev .              # build locally to try a Dockerfile change
 ```
@@ -145,4 +146,12 @@ The threshold of 1.0 was chosen on history. For the HAR model trained on data be
 docker compose run --rm predictor check-drift                                         # exit code 1 on drift above the limit or values outside the training range
 docker compose run --rm predictor check-drift --model-version 2 --as-of 2024-07-16    # a past day for any version: VTBR volume after its reverse split
 docker compose exec db psql -U moex -d moex -c "SELECT * FROM feature_drift ORDER BY as_of DESC, feature LIMIT 6"
+```
+
+**Dashboards.** The API exposes its metrics at `/metrics`: requests by path and status code, response time, the model version it serves and online forecasts. Prometheus scrapes them every 15 seconds and keeps 90 days of history. Grafana shows two dashboards provisioned from files in `monitoring/grafana`: *Модель: качество и дрейф* reads the `forecast_quality` and `feature_drift` tables from PostgreSQL through a read-only user, *Сервис API* reads Prometheus. Both are only reachable from this machine.
+
+```bash
+docker compose exec -T db psql -U moex -d moex < monitoring/grafana_user.sql  # once: read-only database user for Grafana
+docker compose up -d prometheus grafana                                       # Grafana: http://localhost:3000, Prometheus: http://localhost:9090
+curl -s http://localhost:8000/metrics | grep '^api_'                          # what Prometheus reads from the API
 ```

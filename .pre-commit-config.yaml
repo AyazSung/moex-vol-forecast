@@ -14,6 +14,8 @@ repos:
     hooks:
       # YAML без ошибок: compose.yaml, ci.yml, dependabot.yml, этот файл.
       - id: check-yaml
+      # JSON без ошибок: дашборды Grafana в monitoring/grafana/dashboards (этап 6).
+      - id: check-json
       # Не закоммитить случайно большой файл (больше 500 КБ): CSV со свечами,
       # файл модели, дамп базы.
       - id: check-added-large-files

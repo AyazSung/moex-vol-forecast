@@ -1,0 +1,41 @@
+# datasources.yml — источники данных Grafana (этап 6).
+#
+# Grafana сама данных не хранит: она спрашивает их у источников и рисует.
+# Обычно источники заводят руками в интерфейсе, но тогда их не видно в Git и
+# не повторить на другом компьютере. Файлы из папки provisioning Grafana читает
+# при каждом старте и создаёт всё по ним сама — это «настройка кодом».
+#
+# Источников два:
+#   Prometheus — метрики сервиса API: запросы, время ответа, версия модели;
+#   PostgreSQL — итоги ежедневных проверок: таблицы forecast_quality
+#                (качество прогнозов) и feature_drift (дрейф признаков).
+# uid — постоянное короткое имя источника; по нему на источник ссылаются
+# дашборды в папке dashboards.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    # proxy — запросы к источнику делает сервер Grafana, а не браузер. Внутри
+    # compose Prometheus доступен по имени сервиса.
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: PostgreSQL
+    uid: postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: db:5432
+    # Отдельный пользователь базы, который может только читать (файл
+    # monitoring/grafana_user.sql). Даже если дашборд по ошибке попробует
+    # что-то удалить, база не даст. Пароль в файле допустим только для учебной
+    # базы на своём компьютере, как пароль moex в compose.yaml.
+    user: grafana
+    jsonData:
+      database: moex
+      sslmode: disable
+    secureJsonData:
+      password: grafana

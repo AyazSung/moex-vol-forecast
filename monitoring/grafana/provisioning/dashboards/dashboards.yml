@@ -1,0 +1,20 @@
+# dashboards.yml — откуда Grafana берёт дашборды (этап 6).
+#
+# Дашборды лежат в репозитории файлами JSON (папка monitoring/grafana/dashboards)
+# и подключаются в контейнер Grafana по адресу /var/lib/grafana/dashboards.
+# Grafana перечитывает папку сама. Править дашборд — значит править файл и
+# проводить правку через pull request, как код.
+
+apiVersion: 1
+
+providers:
+  - name: moex-vol
+    # Папка в интерфейсе Grafana, где появятся дашборды.
+    folder: moex-vol
+    type: file
+    # Дашборды из файлов нельзя удалить или сохранить из интерфейса: источник
+    # правды — файлы в Git. Поменять что-то можно, но сохранить — только в файл.
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
