@@ -1,7 +1,8 @@
 # compose.yaml — описание нескольких контейнеров, которые работают вместе.
 # Постоянно работающие сервисы (база, сервер MLflow, API):
 #   docker compose up -d db mlflow api
-# Мониторинг (этап 6): Prometheus собирает метрики API, Grafana рисует дашборды:
+# Мониторинг (этап 6): Prometheus собирает метрики API, Grafana рисует дашборды
+# и присылает оповещения в Telegram (настройки — в файле .env.alerts):
 #   docker compose up -d prometheus grafana
 # Разовые задачи (профиль jobs):
 #   docker compose run --rm loader             — загрузить свечи с биржи
@@ -62,7 +63,7 @@ services:
   # ---------- сервер MLflow: журнал экспериментов и реестр моделей ----------
   mlflow:
     # Образ проекта: в нём уже есть MLflow и драйвер PostgreSQL.
-    image: ghcr.io/ayazsung/moex-vol:0.9.0
+    image: ghcr.io/ayazsung/moex-vol:0.10.0
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
@@ -109,7 +110,7 @@ services:
 
   # ---------- загрузчик свечей (разовая задача) ----------
   loader:
-    image: ghcr.io/ayazsung/moex-vol:0.9.0
+    image: ghcr.io/ayazsung/moex-vol:0.10.0
     # Настройки загрузчика (TICKER, FROM_DATE) — из файла .env проекта.
     env_file: .env
     # Адрес базы: хост db — это имя сервиса выше, а не localhost.
@@ -131,7 +132,7 @@ services:
 
   # ---------- пакетный прогноз (разовая задача) ----------
   predictor:
-    image: ghcr.io/ayazsung/moex-vol:0.9.0
+    image: ghcr.io/ayazsung/moex-vol:0.10.0
     command: ["predict-vol"]
     # Прогноз пишется в базу, модель-чемпион берётся с сервера MLflow. Этот же
     # сервис запускает evaluate-forecasts, backfill-forecasts и check-drift
@@ -155,7 +156,7 @@ services:
 
   # ---------- обучение и выбор чемпиона (разовые задачи) ----------
   trainer:
-    image: ghcr.io/ayazsung/moex-vol:0.9.0
+    image: ghcr.io/ayazsung/moex-vol:0.10.0
     # Команда по умолчанию — обучение. Другую команду пишут при запуске, и она
     # заменяет эту целиком: docker compose run --rm trainer promote-model
     command: ["train-model"]
@@ -179,7 +180,7 @@ services:
 
   # ---------- API на FastAPI ----------
   api:
-    image: ghcr.io/ayazsung/moex-vol:0.9.0
+    image: ghcr.io/ayazsung/moex-vol:0.10.0
     # Поднимать сервис снова, когда перезапустился Docker или Mac. Остановленный
     # руками (docker compose stop) сервис так и останется остановленным.
     restart: unless-stopped
@@ -231,7 +232,7 @@ services:
     depends_on:
       - api
 
-  # ---------- Grafana: дашборды (этап 6) ----------
+  # ---------- Grafana: дашборды и оповещения (этап 6) ----------
   grafana:
     image: grafana/grafana:13.2.3
     restart: unless-stopped
@@ -250,8 +251,21 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+    # Токен Telegram-бота и номер чата для оповещений. Файлы читаются по
+    # порядку, и значения из следующего заменяют значения из предыдущего:
+    #   alerts-defaults.env — заглушки из Git: без них Grafana с пустым токеном
+    #                         не запустилась бы вовсе;
+    #   .env.alerts         — настоящие токен и номер чата, файла нет в Git:
+    #                         токен секретный. required: false — файла нет,
+    #                         Grafana всё равно запустится, только оповещения
+    #                         не будут доставлены.
+    env_file:
+      - monitoring/grafana/alerts-defaults.env
+      - path: .env.alerts
+        required: false
     volumes:
-      # Источники данных и откуда брать дашборды — файлы из репозитория.
+      # Настройки из файлов репозитория: источники данных, откуда брать
+      # дашборды, правила оповещений и куда их слать.
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       # Сами дашборды — файлы JSON из репозитория.
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro

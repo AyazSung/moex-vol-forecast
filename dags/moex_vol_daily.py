@@ -11,6 +11,9 @@
 # этапа 6 — проверки: evaluate_forecasts сверяет прошлые прогнозы с тем, что
 # случилось на самом деле, а check_drift — похожи ли свежие признаки на данные,
 # на которых модель училась.
+#
+# Если запуск упал, приходит оповещение в Telegram: on_failure_callback ниже
+# вызывает notify_dag_failure из alerts.py (этап 6).
 
 from datetime import timedelta
 from pathlib import Path
@@ -18,6 +21,7 @@ from pathlib import Path
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import Param, dag
+from alerts import notify_dag_failure
 
 # Папка проекта: здесь лежит compose.yaml, из неё задачи запускают docker compose.
 PROJECT_DIR = str(Path(__file__).resolve().parents[1])
@@ -49,6 +53,9 @@ TICKERS = [
     params={
         "fetch": Param(True, type="boolean", description="fetch candles from MOEX"),
     },
+    # Запуск упал (хоть одна задача упала после всех попыток) — Airflow вызовет
+    # эту функцию, и она пришлёт одно сообщение в Telegram на весь запуск.
+    on_failure_callback=notify_dag_failure,
     tags=["moex"],
 )
 def moex_vol_daily():

@@ -20,7 +20,7 @@ Python, Docker, MLflow, FastAPI, Airflow, PostgreSQL, Prometheus/Grafana, GitHub
 - [x] Stage 3: batch scoring + FastAPI service
 - [x] Stage 4: Airflow orchestration
 - [x] Stage 5: CI/CD
-- [ ] Stage 6: monitoring (forecast quality, drift, Grafana)
+- [x] Stage 6: monitoring (forecast quality, drift, Grafana dashboards, Telegram alerts)
 
 ## CI
 
@@ -117,6 +117,9 @@ Airflow 3 runs on the Mac in its own environment (`~/airflow/.venv`). The DAGs l
 |---|---|---|
 | `moex_vol_daily` | 00:15, Tue–Sat | fetch the last week of candles for 21 tickers (3 at a time, 2 retries) → batch forecast → check that all 21 tickers got a fresh forecast → compare past forecasts with what happened (fails if the serving model is worse than naive over 20 days); in parallel with the forecast, check the champion's input features for drift (fails on drift above the historical limit or on values outside the training range) |
 | `moex_vol_retrain` | 02:00, Sat | train a candidate on all data except the last 13 weeks → compare it with the champion on those 13 weeks → move the `champion` alias if the candidate is at least 1% better → restart the API if it serves an old version → check the API → backfill the new champion's forecasts over those 13 weeks |
+| `moex_alert_test` | manual | a task that always fails: checks that failure alerts reach Telegram |
+
+When a run of `moex_vol_daily` or `moex_vol_retrain` fails, Airflow sends one Telegram message for the whole run: the DAG, the last failed task and a link to its log (see Alerts below).
 
 The champion/challenger step by hand:
 
@@ -155,3 +158,13 @@ docker compose exec -T db psql -U moex -d moex < monitoring/grafana_user.sql  # 
 docker compose up -d prometheus grafana                                       # Grafana: http://localhost:3000, Prometheus: http://localhost:9090
 curl -s http://localhost:8000/metrics | grep '^api_'                          # what Prometheus reads from the API
 ```
+
+**Alerts.** Failures come to Telegram from two places. Airflow calls `dags/alerts.py` when a run of the daily or the retraining DAG fails. Grafana evaluates two rules every minute, provisioned from `monitoring/grafana/provisioning/alerting/alerts.yml`: *API не отвечает* (Prometheus cannot scrape the API for 2 minutes) and *Ежедневный конвейер не отработал* (no forecast was written by a scheduled nightly run, which means Airflow itself is not running). The bot token and the chat id live in `.env.alerts`, which is not in Git; without it everything works, only no messages are sent.
+
+```bash
+cp .env.alerts.example .env.alerts     # then put the bot token and the chat id into .env.alerts
+./scripts/airflow.sh                   # restart Airflow to read .env.alerts
+docker compose up -d grafana           # recreate Grafana to read .env.alerts
+```
+
+Trigger `moex_alert_test` in Airflow to check that a message arrives.

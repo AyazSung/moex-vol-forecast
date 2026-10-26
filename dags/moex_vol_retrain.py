@@ -10,6 +10,9 @@
 # сменился, API перезапускается: модель он загружает только при старте (этап 3).
 # В конце в таблицу forecasts дописываются прогнозы нового чемпиона за эти
 # 13 недель — чтобы проверка качества сразу могла о нём судить (этап 6).
+#
+# Если запуск упал, приходит оповещение в Telegram: on_failure_callback ниже
+# вызывает notify_dag_failure из alerts.py (этап 6).
 
 import json
 import time
@@ -20,6 +23,7 @@ from pathlib import Path
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import Param, dag, task
+from alerts import notify_dag_failure
 
 # Папка проекта: здесь лежит compose.yaml, из неё задачи запускают docker compose.
 PROJECT_DIR = str(Path(__file__).resolve().parents[1])
@@ -68,6 +72,8 @@ def champion_version() -> str:
             0.01, type="number", minimum=0, description="0.01 = at least 1% better"
         ),
     },
+    # Запуск упал — сообщение в Telegram, как у ежедневного DAG-а (этап 6).
+    on_failure_callback=notify_dag_failure,
     tags=["moex"],
 )
 def moex_vol_retrain():

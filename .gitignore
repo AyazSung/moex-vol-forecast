@@ -230,3 +230,7 @@ logs/
 mlflow.db
 mlruns/
 mlartifacts/
+
+# Токен Telegram-бота и номер чата для оповещений (этап 6) — секрет. В Git лежит
+# только шаблон .env.alerts.example.
+.env.alerts

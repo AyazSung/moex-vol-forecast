@@ -15,7 +15,7 @@
 # (или patch / major): она меняет версию и здесь, и в uv.lock.
 # Если поменять только здесь, сборка Docker-образа упадёт на `uv sync --locked`.
 name = "moex-vol-forecast"
-version = "0.9.0"
+version = "0.10.0"
 description = "Daily volatility forecast for MOEX stocks"
 readme = "README.md"
 authors = [
@@ -81,3 +81,6 @@ select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
 # Настройки тестов: `uv run pytest` ищет тесты в папке tests.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Папка dags — в пути поиска модулей тестов: так тесты могут импортировать модуль
+# оповещений dags/alerts.py (этап 6), как это делают DAG-и в Airflow.
+pythonpath = ["dags"]
