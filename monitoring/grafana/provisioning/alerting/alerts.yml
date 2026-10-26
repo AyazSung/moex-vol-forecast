@@ -1,0 +1,168 @@
+# alerts.yml — оповещения Grafana (этап 6): что проверять, куда и как слать.
+#
+# Airflow сообщает об упавших запусках DAG-ов сам (dags/alerts.py). Но есть беды,
+# о которых он не расскажет:
+#   - API упал между запусками — у Airflow в этот момент нет задач, которые
+#     могли бы это заметить;
+#   - не работает сам Airflow: закрыт терминал, уснул Mac, упал Docker. Тогда
+#     ночные DAG-и не запускаются вовсе — и некому прислать сообщение о сбое.
+# Эти две беды проверяет Grafana: раз в минуту она выполняет запросы правил и,
+# если условие выполнено, присылает сообщение в тот же Telegram.
+#
+# Файл состоит из трёх частей:
+#   contactPoints — куда слать: Telegram-бот;
+#   policies      — какие оповещения куда направлять и как часто напоминать;
+#   groups        — сами правила: запрос, условие тревоги и текст сообщения.
+# Как и дашборды, всё это — настройка файлом: Grafana читает его при старте, а
+# в интерфейсе правила видны, но поменять их там нельзя.
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram
+    receivers:
+      - uid: telegram
+        type: telegram
+        settings:
+          # Токен бота и номер чата — из переменных окружения контейнера
+          # Grafana. Их кладёт туда compose.yaml: настоящие — из файла
+          # .env.alerts, которого нет в Git, а если его нет — заглушки из
+          # monitoring/grafana/alerts-defaults.env. Запись $ИМЯ — подставить
+          # значение переменной окружения.
+          bottoken: $TELEGRAM_BOT_TOKEN
+          chatid: $TELEGRAM_CHAT_ID
+          # Текст сообщения — шаблон на языке шаблонов Go:
+          #   .Alerts.Firing   — сработавшие правила;
+          #   .Alerts.Resolved — вернувшиеся в норму: для них «отбой тревоги»;
+          #   .Annotations.summary и .description — тексты из правила ниже.
+          message: |-
+            {{ range .Alerts.Firing }}🔴 Grafana: {{ .Annotations.summary }}
+            {{ .Annotations.description }}
+            {{ end }}{{ range .Alerts.Resolved }}✅ Отбой тревоги: {{ .Annotations.summary }}
+            {{ end }}
+
+policies:
+  - orgId: 1
+    # Все оповещения — в контакт telegram.
+    receiver: telegram
+    # Оповещения одного правила собираются в одно сообщение.
+    group_by: ["grafana_folder", "alertname"]
+    # Подождать 30 секунд, прежде чем отправить первое сообщение группы: вдруг
+    # следом сработает ещё что-то, и всё уйдёт одним сообщением.
+    group_wait: 30s
+    # Не чаще раза в 5 минут — сообщение об изменениях в уже открытой группе.
+    group_interval: 5m
+    # Беда не прошла — напомнить через 4 часа.
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: moex-vol
+    # Правила лежат в той же папке, что и дашборды.
+    folder: moex-vol
+    # Как часто выполнять запросы правил.
+    interval: 1m
+    rules:
+      # ---------- 1. API не отвечает ----------
+      # up — метрика, которую Prometheus ведёт сам для каждой цели: 1 — последний
+      # опрос удался, 0 — нет. Правило срабатывает, если up у API меньше 1 две
+      # минуты подряд: короткий перезапуск API тревоги не вызовет.
+      - uid: api-down
+        title: API не отвечает
+        condition: C
+        data:
+          # A — запрос к Prometheus: последнее значение up у API.
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: up{job="api"}
+              instant: true
+              refId: A
+          # C — условие: значение A меньше 1.
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        # Условие должно держаться 2 минуты, прежде чем придёт сообщение.
+        for: 2m
+        # Prometheus не вернул ни одного значения up для API — тоже тревога:
+        # значит, он API не опрашивает вовсе.
+        noDataState: Alerting
+        # Сам запрос не выполнился (например, упал Prometheus) — отдельное
+        # оповещение об ошибке источника данных.
+        execErrState: Error
+        annotations:
+          summary: API не отвечает
+          description: >-
+            Prometheus уже 2 минуты не может забрать метрики с
+            http://api:8000/metrics. Проверить: docker compose ps,
+            docker compose logs api.
+
+      # ---------- 2. Ежедневный конвейер не отработал ----------
+      # Это сторож для самого Airflow. Каждый ночной запуск пишет прогнозы, и
+      # база ставит им время записи created_at. Запрос считает пропущенные
+      # запуски: дни после последней записи прогноза, когда DAG должен был
+      # отработать, — со вторника по субботу, — и срок уже прошёл. Больше
+      # нуля — ночью конвейер не отработал.
+      - uid: pipeline-missed
+        title: Ежедневный конвейер не отработал
+        condition: C
+        data:
+          # A — запрос к PostgreSQL (пользователь grafana, только чтение):
+          #   max(created_at)        — когда последний раз записан прогноз;
+          #   AT TIME ZONE ...       — в московском времени, как расписание DAG;
+          #   ::date + 1             — со следующего дня после этой записи;
+          #   now() - 45 minutes     — по сегодня, если срок 00:15 прошёл с
+          #                            запасом в полчаса; иначе по вчера;
+          #   generate_series(...)   — по строке на каждый день между ними;
+          #   isodow BETWEEN 2 AND 6 — оставить вторник–субботу, дни запусков.
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: postgres
+            model:
+              format: table
+              editorMode: code
+              rawQuery: true
+              rawSql: |-
+                SELECT count(*) AS missed_runs
+                FROM generate_series(
+                    (SELECT max(created_at) AT TIME ZONE 'Europe/Moscow' FROM forecasts)::date + 1,
+                    (now() AT TIME ZONE 'Europe/Moscow' - interval '45 minutes')::date,
+                    interval '1 day'
+                ) AS day
+                WHERE extract(isodow FROM day) BETWEEN 2 AND 6
+              refId: A
+          # C — условие: пропущенных запусков больше 0.
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        # Запуск мог задержаться — например, Mac проснулся позже. Ждём ещё
+        # полчаса: если прогнозы так и не появились, приходит сообщение.
+        for: 30m
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: Ежедневный конвейер не отработал
+          description: >-
+            Ночного прогноза нет: последний раз прогнозы записывались до срока
+            ежедневного DAG-а. Проверить, запущены ли Airflow
+            (./scripts/airflow.sh) и Docker Desktop.

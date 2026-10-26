@@ -37,6 +37,20 @@ export AIRFLOW__CORE__LOAD_EXAMPLES=False
 export AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL=30
 export AIRFLOW__API__HOST=127.0.0.1
 
+# Оповещения в Telegram (этап 6). Токен бота и номер чата лежат в файле
+# .env.alerts в корне проекта; в Git его нет — токен секретный. Если файл есть,
+# загружаем его строки KEY=значение как переменные окружения:
+#   set -a — все переменные, которые зададут следующие команды, сразу
+#            экспортируются, то есть станут видны Airflow и его частям;
+#   .      — выполнить файл в этой же оболочке (то же, что source);
+#   set +a — вернуть обычный режим.
+# Файла нет — Airflow работает как раньше, просто без оповещений.
+if [ -f "$PROJECT_DIR/.env.alerts" ]; then
+    set -a
+    . "$PROJECT_DIR/.env.alerts"
+    set +a
+fi
+
 # «Активировать» окружение Airflow: его программы — первыми в PATH. Команда
 # airflow standalone запускает свои части командой airflow, и они должны её найти.
 export PATH="$AIRFLOW_HOME/.venv/bin:$PATH"
