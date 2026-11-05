@@ -76,7 +76,7 @@ jobs:
 
       # Поставить uv той же версии, что на Mac, и включить кэш скачанных
       # библиотек: следующие запуски не качают их заново.
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: "0.13.0"
           enable-cache: true
